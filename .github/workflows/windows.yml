@@ -1,0 +1,51 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # whisper-rs-sys builds whisper.cpp (needs cmake, already on the runner)
+      # and runs bindgen (needs libclang).
+      - name: Install LLVM
+        run: choco install llvm --no-progress -y
+      - name: Point bindgen at libclang
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
+      - name: Build (release)
+        run: cargo build --release --locked
+
+      - name: Install NSIS
+        run: choco install nsis --no-progress -y
+
+      - name: Build installer
+        working-directory: installer
+        run: |
+          $version = "0.1.0"
+          & "C:\Program Files (x86)\NSIS\makensis.exe" "/DVERSION=$version" hlas.nsi
+
+      - name: Upload exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: hlas-exe
+          path: target/release/hlas.exe
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: hlas-setup
+          path: installer/Hlas-setup.exe

@@ -1,0 +1,7 @@
+#include <winuser.h>
+
+// Application icon (lowest numeric id becomes the default exe icon).
+1 ICON "hlas.ico"
+
+// Side-by-side manifest: DPI awareness + asInvoker.
+1 RT_MANIFEST "hlas.manifest"
