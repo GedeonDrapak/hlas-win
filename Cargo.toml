@@ -22,7 +22,7 @@ panic = "abort"
 # Audio capture (WASAPI backend on Windows)
 cpal = "0.15"
 # Local Whisper (bundles whisper.cpp; build.rs picks the GPU/CPU backend)
-whisper-rs = { version = "0.14", default-features = false }
+whisper-rs = { version = "0.16", default-features = false }
 # Tray icon + menu
 tray-icon = "0.19"
 # Native Win32 GUI for the settings window (no webview, tiny RAM)
@@ -62,3 +62,8 @@ features = [
 
 [build-dependencies]
 embed-resource = "2.4"
+
+[patch.crates-io]
+# whisper-rs-sys 0.15.0 omits its CMake install lib directory from Rust's link
+# search path on Windows. Keep the one-line upstream fix local until released.
+whisper-rs-sys = { path = "vendor/whisper-rs-sys" }

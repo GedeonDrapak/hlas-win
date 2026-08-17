@@ -62,7 +62,10 @@ impl Recorder {
                 &config,
                 move |data: &[u16], _| {
                     if let Ok(mut b) = sink.lock() {
-                        b.extend(data.iter().map(|s| (*s as f32 / u16::MAX as f32) * 2.0 - 1.0));
+                        b.extend(
+                            data.iter()
+                                .map(|s| (*s as f32 / u16::MAX as f32) * 2.0 - 1.0),
+                        );
                     }
                 },
                 err_fn,

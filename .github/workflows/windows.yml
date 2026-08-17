@@ -1,4 +1,4 @@
-name: build
+name: Windows build
 
 on:
   push:
@@ -6,6 +6,9 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -35,7 +38,8 @@ jobs:
       - name: Build installer
         working-directory: installer
         run: |
-          $version = "0.1.0"
+          $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          $version = $metadata.packages[0].version
           & "C:\Program Files (x86)\NSIS\makensis.exe" "/DVERSION=$version" hlas.nsi
 
       - name: Upload exe
@@ -49,3 +53,12 @@ jobs:
         with:
           name: hlas-setup
           path: installer/Hlas-setup.exe
+
+      - name: Publish GitHub release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            target/release/hlas.exe
+            installer/Hlas-setup.exe

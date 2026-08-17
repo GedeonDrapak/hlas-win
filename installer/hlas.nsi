@@ -10,12 +10,20 @@ Unicode true
 !ifndef VERSION
   !define VERSION "0.1.0"
 !endif
+!ifndef BIN_DIR
+  !define BIN_DIR "..\target\release"
+!endif
+!ifdef RUNTIME_DIR
+  !define HAS_GNU_RUNTIME
+!endif
 
 Name "${APPNAME}"
 OutFile "Hlas-setup.exe"
-InstallDir "$PROGRAMFILES64\${APPNAME}"
-InstallDirRegKey HKLM "Software\${APPNAME}" "InstallDir"
-RequestExecutionLevel admin
+; A dictation helper should install without elevation. All its user data and
+; launch-at-login registry entry are already per-user.
+InstallDir "$LOCALAPPDATA\${APPNAME}"
+InstallDirRegKey HKCU "Software\${APPNAME}" "InstallDir"
+RequestExecutionLevel user
 SetCompressor /SOLID lzma
 
 !include "MUI2.nsh"
@@ -36,22 +44,28 @@ SetCompressor /SOLID lzma
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  File "..\target\release\hlas.exe"
+  File "${BIN_DIR}\hlas.exe"
   File "..\assets\hlas.ico"
+  !ifdef HAS_GNU_RUNTIME
+    ; Cross-compiled GNU builds need the complete runtime beside hlas.exe.
+    File "${RUNTIME_DIR}\libstdc++-6.dll"
+    File "${RUNTIME_DIR}\libgcc_s_seh-1.dll"
+    File "${RUNTIME_DIR}\..\bin\libwinpthread-1.dll"
+  !endif
 
   CreateShortCut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\hlas.exe" "" "$INSTDIR\hlas.ico"
 
-  WriteRegStr HKLM "Software\${APPNAME}" "InstallDir" "$INSTDIR"
+  WriteRegStr HKCU "Software\${APPNAME}" "InstallDir" "$INSTDIR"
 
   ; Add/Remove Programs metadata.
   !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
-  WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "${APPNAME} - ${DESCRIPTION}"
-  WriteRegStr HKLM "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\hlas.ico"
-  WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "${COMPANY}"
-  WriteRegStr HKLM "${UNINST_KEY}" "UninstallString" "$INSTDIR\uninstall.exe"
-  WriteRegDWORD HKLM "${UNINST_KEY}" "NoModify" 1
-  WriteRegDWORD HKLM "${UNINST_KEY}" "NoRepair" 1
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${APPNAME} - ${DESCRIPTION}"
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\hlas.ico"
+  WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
+  WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${COMPANY}"
+  WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" "$INSTDIR\uninstall.exe"
+  WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
+  WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
 SectionEnd
@@ -59,6 +73,9 @@ SectionEnd
 Section "Uninstall"
   Delete "$INSTDIR\hlas.exe"
   Delete "$INSTDIR\hlas.ico"
+  Delete "$INSTDIR\libstdc++-6.dll"
+  Delete "$INSTDIR\libgcc_s_seh-1.dll"
+  Delete "$INSTDIR\libwinpthread-1.dll"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
 
@@ -67,6 +84,6 @@ Section "Uninstall"
   ; Remove the per-user launch-at-login entry the app may have written.
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Hlas"
 
-  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
-  DeleteRegKey HKLM "Software\${APPNAME}"
+  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
+  DeleteRegKey HKCU "Software\${APPNAME}"
 SectionEnd

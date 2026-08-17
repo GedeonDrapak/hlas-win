@@ -45,8 +45,14 @@ pub fn transcribe(
     if let Some(lang) = config.languages.first() {
         form = form.text("language", lang.clone());
     }
+    if !config.vocabulary.is_empty() {
+        form = form.text("prompt", config.vocabulary.join(", "));
+    }
 
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(180))
+        .build()?;
     let resp = client
         .post(provider.endpoint())
         .bearer_auth(api_key)

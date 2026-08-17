@@ -11,8 +11,8 @@ use once_cell::sync::OnceCell;
 use std::sync::atomic::{AtomicU32, Ordering};
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage,
-    HHOOK, KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+    CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, HHOOK,
+    KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,9 +34,8 @@ pub fn start(watch_vk: u32) -> Receiver<KeyEdge> {
     WATCH_VK.store(watch_vk, Ordering::SeqCst);
 
     std::thread::spawn(|| unsafe {
-        let hook: HHOOK =
-            SetWindowsHookExW(WH_KEYBOARD_LL, Some(low_level_proc), None, 0)
-                .expect("failed to install keyboard hook");
+        let hook: HHOOK = SetWindowsHookExW(WH_KEYBOARD_LL, Some(low_level_proc), None, 0)
+            .expect("failed to install keyboard hook");
         let _ = hook;
 
         // Pump messages so the hook keeps firing on this thread.

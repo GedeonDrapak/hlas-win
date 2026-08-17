@@ -14,7 +14,7 @@ mod settings;
 mod transcribe;
 mod tray;
 
-use config::Config;
+use config::{Config, Engine};
 use hotkey::KeyEdge;
 use std::sync::{Arc, Mutex};
 
@@ -47,7 +47,7 @@ fn spawn_control_loop(
         let mut recorder: Option<audio::Recorder> = None;
         for edge in key_events.iter() {
             match edge {
-                KeyEdge::Down => match audio::Recorder::start() {
+                KeyEdge::Down if recorder.is_none() => match audio::Recorder::start() {
                     Ok(r) => {
                         recorder = Some(r);
                         let _ = overlay_tx.send(overlay::State::Recording);
@@ -66,6 +66,19 @@ fn spawn_control_loop(
                         }
                     };
                     let cfg = config.lock().unwrap().clone();
+                    if samples.len() < 1_600 {
+                        // Ignore accidental taps and microphone warm-up noise.
+                        let _ = overlay_tx.send(overlay::State::Hidden);
+                        continue;
+                    }
+                    if cfg.engine == Engine::Local && !transcribe::local_model_present() {
+                        let _ = overlay_tx.send(overlay::State::DownloadingModel);
+                        if let Err(e) = transcribe::ensure_local_model() {
+                            log::error!("local model download failed: {e}");
+                            show_error(&overlay_tx);
+                            continue;
+                        }
+                    }
                     match transcribe::transcribe(&cfg, &samples) {
                         Ok(text) if !text.is_empty() => {
                             if let Err(e) = inject::paste_text(&text) {
@@ -73,13 +86,24 @@ fn spawn_control_loop(
                             }
                         }
                         Ok(_) => log::info!("empty transcript"),
-                        Err(e) => log::error!("transcription failed: {e}"),
+                        Err(e) => {
+                            log::error!("transcription failed: {e}");
+                            show_error(&overlay_tx);
+                            continue;
+                        }
                     }
                     let _ = overlay_tx.send(overlay::State::Hidden);
                 }
+                KeyEdge::Down => {}
             }
         }
     });
+}
+
+fn show_error(overlay_tx: &crossbeam_channel::Sender<overlay::State>) {
+    let _ = overlay_tx.send(overlay::State::Error);
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let _ = overlay_tx.send(overlay::State::Hidden);
 }
 
 fn init_logging() {

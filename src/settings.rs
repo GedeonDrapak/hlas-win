@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 struct Controls {
     window: nwg::Window,
-    local: nwg::RadioButton,
+    _local: nwg::RadioButton,
     groq: nwg::RadioButton,
     openai: nwg::RadioButton,
     languages: nwg::TextInput,
@@ -183,7 +183,7 @@ fn build(config: &Arc<Mutex<Config>>) -> Result<Controls, nwg::NwgError> {
 
     Ok(Controls {
         window,
-        local,
+        _local: local,
         groq,
         openai,
         languages,

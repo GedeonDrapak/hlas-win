@@ -12,9 +12,9 @@ use std::sync::Mutex;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateRoundRectRgn, CreateSolidBrush, DrawTextW, EndPaint, FillRect, InvalidateRect,
-    SetBkMode, SetTextColor, SetWindowRgn, DT_CENTER, DT_SINGLELINE, DT_VCENTER, PAINTSTRUCT,
-    TRANSPARENT,
+    BeginPaint, CreateRoundRectRgn, CreateSolidBrush, DrawTextW, EndPaint, FillRect,
+    InvalidateRect, SetBkMode, SetTextColor, SetWindowRgn, DT_CENTER, DT_SINGLELINE, DT_VCENTER,
+    PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -23,10 +23,12 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 pub enum State {
     Hidden,
     Recording,
+    DownloadingModel,
     Transcribing,
+    Error,
 }
 
-const WIDTH: i32 = 240;
+const WIDTH: i32 = 280;
 const HEIGHT: i32 = 48;
 const BOTTOM_GAP: i32 = 60;
 const TIMER_ID: usize = 1;
@@ -97,12 +99,7 @@ fn bottom_center() -> (i32, i32) {
     }
 }
 
-unsafe extern "system" fn wndproc(
-    hwnd: HWND,
-    msg: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
+unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_TIMER => {
             if let Some(rx) = COMMANDS.get() {
@@ -166,7 +163,9 @@ unsafe fn paint(hwnd: HWND) {
     let state = *CURRENT.lock().unwrap();
     let label: Vec<u16> = match state {
         State::Recording => "● Recording",
+        State::DownloadingModel => "Downloading local model…",
         State::Transcribing => "Transcribing…",
+        State::Error => "Couldn't transcribe - see log",
         State::Hidden => "",
     }
     .encode_utf16()

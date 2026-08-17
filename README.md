@@ -1,8 +1,8 @@
 # Hlas for Windows
 
-Ultra-minimal dictation for Windows. Hold a key, speak Czech or English, release — text lands at your cursor. No subscription, no account, no telemetry.
+Ultra-minimal dictation for Windows. Hold a key, speak Czech or English, release - text lands at your cursor. No subscription, no account, no telemetry.
 
-The Windows counterpart to [Hlas for macOS](https://github.com/GedeonDrapak/hlas). Native Rust, no Electron, no runtime — a single small `.exe` that idles at a few MB of RAM.
+The Windows counterpart to [Hlas for macOS](https://github.com/GedeonDrapak/hlas). Native Rust, no Electron, no runtime - a single small `.exe` that idles at a few MB of RAM.
 
 ## Push-to-talk key
 
@@ -10,7 +10,7 @@ Windows has no `Fn` scancode (the keyboard firmware eats it), so the macOS "hold
 
 ## Engines
 
-- **Local (default):** whisper.cpp `large-v3-turbo-q5_0`, downloaded once (~547 MB) to `%APPDATA%\Hlas\models\`. Runs on CPU; audio never leaves the PC.
+- **Local (default):** whisper.cpp `large-v3-turbo-q5_0`, downloaded automatically on the first local dictation (~547 MB) to `%APPDATA%\Hlas\models\`. Runs on CPU; audio never leaves the PC.
 - **Groq API:** `whisper-large-v3-turbo`. BYOK.
 - **OpenAI API:** `gpt-4o-transcribe`. BYOK.
 
@@ -18,7 +18,7 @@ API keys are stored in the Windows Credential Manager, never in a config file.
 
 ## Install
 
-Grab `Hlas-setup.exe` from the [latest release](https://github.com/GedeonDrapak/hlas-win/releases/latest), or build it yourself.
+Grab `Hlas-setup.exe` from the [latest release](https://github.com/GedeonDrapak/hlas-win/releases/latest), or build it yourself. The installer is per-user, needs no administrator rights, and registers a normal Windows uninstaller.
 
 ## Build
 
@@ -29,11 +29,11 @@ winget install LLVM.LLVM
 cargo build --release
 ```
 
-The executable lands at `target\release\hlas.exe`. CI builds it and the NSIS installer on every push — see `.github/workflows/windows.yml`.
+The executable lands at `target\release\hlas.exe`. CI builds it and the NSIS installer on every push. Pushing a version tag such as `v0.1.0` publishes both files to a GitHub Release.
 
 ## Architecture
 
-One module, one concern — mirrors the macOS layout:
+One module, one concern - mirrors the macOS layout:
 
 | File | Concern |
 |---|---|

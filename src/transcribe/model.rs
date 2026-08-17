@@ -34,9 +34,7 @@ pub fn ensure(progress: impl Fn(u64, u64)) -> Result<PathBuf> {
     }
     std::fs::create_dir_all(Config::models_dir()?)?;
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(None)
-        .build()?;
+    let client = reqwest::blocking::Client::builder().timeout(None).build()?;
     let mut resp = client.get(URL).send()?.error_for_status()?;
     let total = resp.content_length().unwrap_or(EXPECTED_BYTES);
 

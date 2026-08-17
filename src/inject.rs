@@ -9,8 +9,8 @@ use anyhow::Result;
 use arboard::Clipboard;
 use std::{thread, time::Duration};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL,
-    VK_V,
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+    VK_CONTROL, VK_V,
 };
 
 pub fn paste_text(text: &str) -> Result<()> {
@@ -26,9 +26,13 @@ pub fn paste_text(text: &str) -> Result<()> {
     send_ctrl_v();
     thread::sleep(Duration::from_millis(60));
 
-    // Best-effort restore of the user's previous clipboard.
+    // Restore only if the clipboard still contains our text. This prevents us
+    // from overwriting something the user copied while the target app handled
+    // the paste shortcut.
     if let Some(prev) = saved {
-        let _ = clipboard.set_text(prev);
+        if clipboard.get_text().ok().as_deref() == Some(text) {
+            let _ = clipboard.set_text(prev);
+        }
     }
     Ok(())
 }
@@ -40,7 +44,11 @@ fn key(vk: VIRTUAL_KEY, up: bool) -> INPUT {
             ki: KEYBDINPUT {
                 wVk: vk,
                 wScan: 0,
-                dwFlags: if up { KEYEVENTF_KEYUP } else { Default::default() },
+                dwFlags: if up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    Default::default()
+                },
                 time: 0,
                 dwExtraInfo: 0,
             },

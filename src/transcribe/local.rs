@@ -19,7 +19,8 @@ fn context() -> Result<&'static Mutex<WhisperContext>> {
         return Err(anyhow!("local model not downloaded yet"));
     }
     let ctx = WhisperContext::new_with_params(
-        path.to_str().ok_or_else(|| anyhow!("non-utf8 model path"))?,
+        path.to_str()
+            .ok_or_else(|| anyhow!("non-utf8 model path"))?,
         WhisperContextParameters::default(),
     )?;
     let _ = CONTEXT.set(Mutex::new(ctx));
@@ -28,7 +29,9 @@ fn context() -> Result<&'static Mutex<WhisperContext>> {
 
 pub fn transcribe(config: &Config, samples: &[f32]) -> Result<String> {
     let ctx_lock = context()?;
-    let ctx = ctx_lock.lock().map_err(|_| anyhow!("whisper ctx poisoned"))?;
+    let ctx = ctx_lock
+        .lock()
+        .map_err(|_| anyhow!("whisper ctx poisoned"))?;
     let mut state = ctx.create_state()?;
 
     let mut params = FullParams::new(SamplingStrategy::BeamSearch {
@@ -41,6 +44,9 @@ pub fn transcribe(config: &Config, samples: &[f32]) -> Result<String> {
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
     params.set_suppress_blank(true);
+    if !config.vocabulary.is_empty() {
+        params.set_initial_prompt(&config.vocabulary.join(", "));
+    }
 
     // First configured language wins as a hint; empty list means auto-detect.
     if let Some(lang) = config.languages.first() {
@@ -51,10 +57,9 @@ pub fn transcribe(config: &Config, samples: &[f32]) -> Result<String> {
 
     state.full(params, samples)?;
 
-    let n = state.full_n_segments()?;
     let mut out = String::new();
-    for i in 0..n {
-        out.push_str(&state.full_get_segment_text(i)?);
+    for segment in state.as_iter() {
+        out.push_str(segment.to_str()?);
     }
     Ok(out.trim().to_string())
 }
