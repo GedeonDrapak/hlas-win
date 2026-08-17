@@ -13,7 +13,7 @@ pub enum Engine {
     Local,
     /// Groq cloud, whisper-large-v3-turbo. Fastest, BYOK.
     Groq,
-    /// OpenAI cloud, gpt-4o-transcribe. Best accuracy, BYOK.
+    /// OpenAI cloud, gpt-transcribe. Best accuracy, vocabulary support, BYOK.
     OpenAI,
 }
 

@@ -12,7 +12,7 @@ Windows has no `Fn` scancode (the keyboard firmware eats it), so the macOS "hold
 
 - **Local (default):** whisper.cpp `large-v3-turbo-q5_0`, downloaded automatically on the first local dictation (~547 MB) to `%APPDATA%\Hlas\models\`. Runs on CPU; audio never leaves the PC.
 - **Groq API:** `whisper-large-v3-turbo`. BYOK.
-- **OpenAI API:** `gpt-4o-transcribe`. BYOK.
+- **OpenAI API:** `gpt-transcribe` - best accuracy and vocabulary support. BYOK.
 
 API keys are stored in the Windows Credential Manager, never in a config file.
 

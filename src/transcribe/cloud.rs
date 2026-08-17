@@ -22,7 +22,7 @@ impl Provider {
     fn model(self) -> &'static str {
         match self {
             Provider::Groq => "whisper-large-v3-turbo",
-            Provider::OpenAI => "gpt-4o-transcribe",
+            Provider::OpenAI => "gpt-transcribe",
         }
     }
 }
