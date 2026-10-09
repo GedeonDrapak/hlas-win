@@ -39,6 +39,8 @@ Win32 layer (`src/win`). Feature parity with Hlas for macOS 0.4.2.
 
 ### Added
 
+- Dark look after the macOS design: near-black surfaces, Eden green, Satoshi,
+  Settings with a sidebar, switches, segmented controls and dark dropdowns.
 - Hold to talk, or quick-tap to keep listening hands-free; tap again to stop.
   Esc cancels at any point.
 - Smart text (same prompt and validation as macOS), exact replacements,

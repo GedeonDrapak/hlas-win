@@ -126,9 +126,12 @@ legal identity). Once the secrets exist, CI signs automatically.
 - **Low-level hook**: Windows may drop it if the system stalls; Hlas
   re-installs it every 10 minutes. If dictation "stops working" after sleep,
   check the log for `keyboard hook install failed`.
-- **Look**: settings, history and result windows use standard Win32 controls
-  (light theme). The tour's left panel and the pill match the macOS design.
-  A dark custom UI is a separate project.
+- **Look**: every window uses the dark skin in `src/win/ui/skin.rs`
+  (macOS design tokens, bundled Satoshi, owner-drawn buttons, switches,
+  segmented controls, sidebar, own dropdown list, borderless edits). Text
+  boxes have no scrollbar (wheel and keyboard scroll, as on macOS). The
+  dropdown list has only been seen in code review, not on screen: open each
+  dropdown once on a real PC (mouse, keyboard, wheel, typing a letter).
 - **Narrator**: no screen-reader announcements yet (macOS has VoiceOver ones).
 - **Vulkan build** (`hlas-vulkan.exe`, experimental): needs `vulkan-1.dll`
   (present with any current GPU driver) and has not been benchmarked. Compare
@@ -271,5 +274,5 @@ Groq the default in the welcome tour and keep Local as the private option.
 2. Signing (section 6).
 3. winget manifest (`winget-pkgs`), once releases are signed.
 4. Benchmark the Vulkan build; if it is reliably faster, offer it in the installer.
-5. Dark theme for Settings/History (custom-drawn or a small UI toolkit).
+5. ~~Dark theme for Settings/History~~ done in `ui-dark`; Narrator labels for the painted text.
 6. Parakeet / ElevenLabs Scribe engines, mirroring the macOS backlog.
