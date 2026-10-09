@@ -1,0 +1,19 @@
+# whisper-rs-sys passes every GGML_* variable to whisper.cpp's CMake.
+#
+# GGML_NATIVE defaults to ON, which compiles whisper.cpp for the build
+# machine's CPU. GitHub's Windows runners have AVX-512, so that binary dies
+# with an illegal instruction on most laptops. OFF selects a portable x86-64
+# baseline: SSE4.2, AVX, AVX2, BMI2 and (implied on MSVC) FMA and F16C, which
+# every x86-64 PC since about 2015 has. The app checks for AVX2 at run time
+# and points older CPUs to a cloud engine instead of crashing.
+[env]
+GGML_NATIVE = "OFF"
+# Spelled out so cross-builds (where CMake defaults them to OFF) match the
+# native MSVC build in CI.
+GGML_SSE42 = "ON"
+GGML_AVX = "ON"
+GGML_AVX2 = "ON"
+GGML_BMI2 = "ON"
+GGML_FMA = "ON"
+GGML_F16C = "ON"
+GGML_AVX512 = "OFF"

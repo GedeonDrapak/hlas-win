@@ -25,6 +25,31 @@ static HOLDER: Lazy<Mutex<Holder>> = Lazy::new(|| {
     })
 });
 
+unsafe extern "C" fn abort_requested(user_data: *mut std::ffi::c_void) -> bool {
+    !user_data.is_null() && (*(user_data as *const AtomicBool)).load(Ordering::Relaxed)
+}
+
+/// The build targets the portable AVX2 baseline (see .cargo/config.toml).
+/// Older CPUs would crash with an illegal instruction, so they are told to use
+/// a cloud engine instead.
+pub fn cpu_supported() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        std::arch::is_x86_feature_detected!("avx2")
+            && std::arch::is_x86_feature_detected!("fma")
+            && std::arch::is_x86_feature_detected!("f16c")
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+/// whisper.cpp's compiled feature list, for the log.
+pub fn system_info() -> &'static str {
+    whisper_rs::print_system_info()
+}
+
 fn threads() -> i32 {
     // whisper.cpp scales with physical cores; logical/2 approximates them.
     let logical = std::thread::available_parallelism()
@@ -37,11 +62,15 @@ fn load(holder: &mut Holder) -> Result<()> {
     if holder.ctx.is_some() {
         return Ok(());
     }
+    if !cpu_supported() {
+        return Err(LocalError::CpuUnsupported.into());
+    }
     if !model::present() {
         return Err(LocalError::ModelMissing.into());
     }
     let path = model::path()?;
     let began = Instant::now();
+    log::info!("whisper.cpp: {}", system_info().trim());
     let mut params = WhisperContextParameters::default();
     params.use_gpu(true).flash_attn(true);
     let ctx = WhisperContext::new_with_params(
@@ -138,8 +167,14 @@ fn run(
     if let Some(prompt) = prompt {
         params.set_initial_prompt(prompt);
     }
-    let abort = cancel.clone();
-    params.set_abort_callback_safe(move || abort.load(Ordering::Relaxed));
+    // whisper-rs 0.16's set_abort_callback_safe stores the closure as one type
+    // and reads it back as another, so whisper.cpp polls garbage memory and
+    // aborts the encoder at random ("failed to encode", -6). Use the raw hook
+    // with the cancel flag itself as user data; it outlives `state.full`.
+    unsafe {
+        params.set_abort_callback(Some(abort_requested));
+        params.set_abort_callback_user_data(Arc::as_ptr(cancel) as *mut std::ffi::c_void);
+    }
 
     let began = Instant::now();
     let status = state.full(params, samples);

@@ -93,6 +93,7 @@ pub enum LocalError {
     MicrophoneBlocked,
     TooLong,
     UnsupportedAudio,
+    CpuUnsupported,
     Cancelled,
 }
 
@@ -111,6 +112,9 @@ impl fmt::Display for LocalError {
             }
             LocalError::TooLong => "Audio exceeds the 10-minute limit.",
             LocalError::UnsupportedAudio => "Could not decode this audio file.",
+            LocalError::CpuUnsupported => {
+                "This processor cannot run the local engine (no AVX2). Choose Groq in Settings: fast, about $1 to 3 a month."
+            }
             LocalError::Cancelled => "Cancelled.",
         })
     }

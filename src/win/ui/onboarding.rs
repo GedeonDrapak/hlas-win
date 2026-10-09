@@ -536,7 +536,13 @@ impl Onboarding {
             2 => {
                 if self.engine() == Engine::Local {
                     let s = model::status();
-                    let (text, button, pos) = if model::present() {
+                    let (text, button, pos) = if !crate::win::engine::local::cpu_supported() {
+                        (
+                            "This processor cannot run Local. Pick Groq above.".to_string(),
+                            "Unavailable",
+                            0,
+                        )
+                    } else if model::present() {
                         ("Model ready. Works offline.".to_string(), "Ready", 100)
                     } else if s.active {
                         let t = if s.verifying {
@@ -560,7 +566,9 @@ impl Onboarding {
                     if self.model_button.text() != button {
                         self.model_button.set_text(button);
                     }
-                    self.model_button.set_enabled(!model::present());
+                    self.model_button.set_enabled(
+                        !model::present() && crate::win::engine::local::cpu_supported(),
+                    );
                     self.model_progress.set_pos(pos);
                 }
             }

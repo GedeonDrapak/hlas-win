@@ -278,6 +278,13 @@ fn main() {
         config.define("CMAKE_BUILD_TYPE", "Release");
     }
 
+    // Local fix: rebuild whisper.cpp when the instruction-set switches change
+    // (upstream forwards them but does not track them, so a cached build kept
+    // stale CPU flags).
+    for key in ["GGML_NATIVE", "GGML_SSE42", "GGML_AVX", "GGML_AVX2", "GGML_AVX512", "GGML_FMA", "GGML_F16C", "GGML_BMI2"] {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
+
     // Allow passing any WHISPER or CMAKE compile flags
     for (key, value) in env::vars() {
         let is_whisper_flag =

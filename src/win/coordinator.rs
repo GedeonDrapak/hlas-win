@@ -437,6 +437,9 @@ fn process(
         return Outcome::Hidden;
     };
 
+    if cfg.engine == Engine::Local && !engine::local::cpu_supported() {
+        return Outcome::Error(LocalError::CpuUnsupported.to_string());
+    }
     if cfg.engine == Engine::Local && !engine::model::present() {
         let progress = |p: u8| {
             if !cancel.load(Ordering::SeqCst) {

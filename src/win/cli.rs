@@ -85,6 +85,10 @@ pub fn run(args: &[String]) -> i32 {
         let samples = decode::decode_file(std::path::Path::new(&input), &cancel)?;
         let prepared = audio::padded(&samples)
             .ok_or_else(|| anyhow::anyhow!("audio is too short or silent"))?;
+        if cfg.engine == Engine::Local {
+            eprintln!("whisper.cpp: {}", engine::local::system_info().trim());
+            eprintln!("cpu supported: {}", engine::local::cpu_supported());
+        }
         let began = std::time::Instant::now();
         let raw = engine::transcribe(&cfg, &prepared, &cancel)?;
         eprintln!(

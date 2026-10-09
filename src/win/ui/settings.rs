@@ -412,7 +412,13 @@ impl SettingsWindow {
 
     fn refresh_model(&self) {
         let s = model::status();
-        if model::present() {
+        if !crate::win::engine::local::cpu_supported() {
+            self.model_status
+                .set_text("This processor cannot run Local. Use Groq or OpenAI.");
+            self.model_button.set_text("Unavailable");
+            self.model_button.set_enabled(false);
+            self.model_progress.set_pos(0);
+        } else if model::present() {
             self.model_status
                 .set_text("Local model ready (547 MB, large-v3-turbo)");
             self.model_button.set_text("Ready");

@@ -132,8 +132,10 @@ jobs:
       - name: Transcribe Czech audio locally
         run: .github/scripts/e2e-transcribe.ps1
       - name: Screenshots of every window
+        if: ${{ !cancelled() }}
         run: .github/scripts/screenshots.ps1
       - name: Hotkey to Notepad, end to end
+        if: ${{ !cancelled() }}
         continue-on-error: true
         run: .github/scripts/e2e-hotkey.ps1
       # Last, so a new lint in a newer toolchain never hides the e2e results.
