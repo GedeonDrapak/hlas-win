@@ -151,7 +151,19 @@ legal identity). Once the secrets exist, CI signs automatically.
   benchmark ran all three configs in 3.6 min and "Transcribe Czech audio
   locally" took 53 s for the whole step; the MSVC step hit its 15 min limit.
   The fix restores CMake's own Release flags (`/MD /O2 /Ob2 /DNDEBUG`, plus
-  `/EHsc` for C++) for MSVC targets. Not yet confirmed by a CI run.
+  `/EHsc` for C++) for MSVC targets. Confirmed by CI run 37922714743, the
+  first fully green run (6.1 s of Czech audio, Windows runner, 4 vCPU):
+
+  | Build | 1 thread greedy | 4 threads greedy | 4 threads beam | default (2 threads, beam) |
+  |---|---|---|---|---|
+  | MSVC before fix | > 300 s | > 300 s | > 300 s | 870 s |
+  | MSVC after fix | 94.0 s | 50.8 s | 44.7 s | 52.3 s |
+  | clang + Ninja | 91.1 s | 48.9 s | 47.1 s | 62.4 s |
+
+  MSVC and clang are now equal, so the release build stays on MSVC. The
+  hotkey-to-Notepad end-to-end step passes for the first time. Still about
+  6x slower than the Mac (7 s): the Mac build uses Accelerate, and the runner
+  is a weak shared VM. A real laptop number is still needed (section 3).
 - **Smart App Control blocks Hlas entirely, not just a SmartScreen warning.**
   On a PC with Smart App Control on, every unsigned binary without cloud
   reputation is blocked with no "Run anyway" (CodeIntegrity events 3077/3118).
