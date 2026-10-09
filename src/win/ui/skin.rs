@@ -54,6 +54,9 @@ mod m {
     pub const CTLCOLORLISTBOX: u32 = 0x0134;
     pub const CTLCOLORBTN: u32 = 0x0135;
     pub const CTLCOLORSTATIC: u32 = 0x0138;
+    pub const NCCALCSIZE: u32 = 0x0083;
+    pub const NCPAINT: u32 = 0x0085;
+    pub const THEMECHANGED: u32 = 0x031A;
     pub const MOUSEMOVE: u32 = 0x0200;
     pub const LBUTTONDOWN: u32 = 0x0201;
     pub const LBUTTONDBLCLK: u32 = 0x0203;
@@ -65,7 +68,6 @@ mod m {
     pub const BS_OWNERDRAW: isize = 0x000B;
     pub const WS_BORDER: isize = 0x0080_0000;
     pub const WS_CLIPCHILDREN: isize = 0x0200_0000;
-    pub const WS_EX_CLIENTEDGE: isize = 0x0200;
     pub const ODT_LISTBOX: u32 = 2;
     pub const ODT_BUTTON: u32 = 4;
     pub const ODS_SELECTED: u32 = 0x0001;
@@ -76,6 +78,7 @@ mod m {
 
 /// DRAWITEMSTRUCT, declared here so the layout is obvious.
 #[repr(C)]
+#[allow(dead_code)]
 struct DrawItem {
     ctl_type: u32,
     ctl_id: u32,
@@ -100,7 +103,12 @@ pub fn load_fonts() -> bool {
     FONT_FILES.iter().all(|data| {
         let mut count = 0u32;
         let handle = unsafe {
-            AddFontMemResourceEx(data.as_ptr() as _, data.len() as u32, None, &mut count)
+            AddFontMemResourceEx(
+                data.as_ptr() as _,
+                data.len() as u32,
+                None,
+                std::ptr::addr_of_mut!(count) as *const u32,
+            )
         };
         !handle.is_invalid() && count > 0
     })
@@ -115,13 +123,45 @@ pub fn enable_dark_mode() {
             return;
         };
         if let Some(f) = GetProcAddress(ux, PCSTR(135 as *const u8)) {
-            let set: unsafe extern "system" fn(i32) -> i32 = std::mem::transmute(f);
+            let set = std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(i32) -> i32,
+            >(f);
             set(2);
         }
+        // RefreshImmersiveColorPolicyState, ordinal 104.
+        if let Some(f) = GetProcAddress(ux, PCSTR(104 as *const u8)) {
+            let refresh = std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(),
+            >(f);
+            refresh();
+        }
         if let Some(f) = GetProcAddress(ux, PCSTR(136 as *const u8)) {
-            let flush: unsafe extern "system" fn() = std::mem::transmute(f);
+            let flush = std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(),
+            >(f);
             flush();
         }
+    }
+}
+
+/// Lets one window use the dark variants of its theme
+/// (uxtheme AllowDarkModeForWindow, ordinal 133), then reapplies the theme.
+fn allow_dark(hwnd: HWND, theme: PCWSTR) {
+    unsafe {
+        if let Ok(ux) = LoadLibraryW(w!("uxtheme.dll")) {
+            if let Some(f) = GetProcAddress(ux, PCSTR(133 as *const u8)) {
+                let allow = std::mem::transmute::<
+                    unsafe extern "system" fn() -> isize,
+                    unsafe extern "system" fn(HWND, BOOL) -> BOOL,
+                >(f);
+                allow(hwnd, BOOL(1));
+            }
+        }
+        let _ = SetWindowTheme(hwnd, theme, PCWSTR::null());
+        SendMessageW(hwnd, m::THEMECHANGED, WPARAM(0), LPARAM(0));
     }
 }
 
@@ -284,7 +324,7 @@ impl Canvas {
         };
         let Ok(handle) = LoadImageW(
             HINSTANCE::from(module),
-            PCWSTR(1 as *const u16),
+            PCWSTR(std::ptr::without_provenance::<u16>(1)),
             IMAGE_ICON,
             size,
             size,
@@ -305,6 +345,24 @@ impl Canvas {
             DI_NORMAL,
         );
         let _ = DestroyIcon(icon);
+    }
+
+    unsafe fn bitmap(&self, bitmap: isize, r: RECT) {
+        let src = CreateCompatibleDC(self.dc);
+        let old = SelectObject(src, HBITMAP(bitmap as _));
+        let _ = BitBlt(
+            self.dc,
+            r.left,
+            r.top,
+            r.right - r.left,
+            r.bottom - r.top,
+            src,
+            0,
+            0,
+            SRCCOPY,
+        );
+        SelectObject(src, old);
+        let _ = DeleteDC(src);
     }
 
     unsafe fn blit(&self, dst: HDC, x: i32, y: i32) {
@@ -374,6 +432,7 @@ enum Shape {
         color: u32,
     },
     Logo,
+    Bitmap(isize),
 }
 
 struct Deco {
@@ -395,7 +454,11 @@ impl Meter {
         if (self.value.get() - v).abs() > 0.004 {
             self.value.set(v);
             unsafe {
-                let _ = InvalidateRect(HWND(self.hwnd as _), Some(&self.rect), BOOL(1));
+                let _ = InvalidateRect(
+                    HWND(self.hwnd as _),
+                    Some(&self.rect as *const RECT),
+                    BOOL(1),
+                );
             }
         }
     }
@@ -429,7 +492,11 @@ impl Text {
 
     fn repaint(&self) {
         unsafe {
-            let _ = InvalidateRect(HWND(self.hwnd as _), Some(&self.rect), BOOL(1));
+            let _ = InvalidateRect(
+                HWND(self.hwnd as _),
+                Some(&self.rect as *const RECT),
+                BOOL(1),
+            );
         }
     }
 }
@@ -438,8 +505,6 @@ impl Text {
 pub const WRAP: DRAW_TEXT_FORMAT = DRAW_TEXT_FORMAT(DT_LEFT.0 | DT_WORDBREAK.0);
 pub const LINE: DRAW_TEXT_FORMAT =
     DRAW_TEXT_FORMAT(DT_LEFT.0 | DT_SINGLELINE.0 | DT_VCENTER.0 | DT_END_ELLIPSIS.0);
-pub const CENTER: DRAW_TEXT_FORMAT =
-    DRAW_TEXT_FORMAT(DT_CENTER.0 | DT_SINGLELINE.0 | DT_VCENTER.0 | DT_END_ELLIPSIS.0);
 
 /// A segmented control: one selected option.
 pub struct Segmented {
@@ -473,6 +538,7 @@ pub struct Skin {
 
 const WINDOW_HANDLER: usize = 0x1_4C41;
 const CHILD_HANDLER: usize = 0x1_4C42;
+const EDIT_HANDLER: usize = 0x1_4C43;
 
 impl Skin {
     pub fn new(theme: Rc<Theme>, window: &nwg::Window, bg: u32) -> Rc<Skin> {
@@ -493,6 +559,7 @@ impl Skin {
             }
             let style = GetWindowLongPtrW(h, GWL_STYLE);
             SetWindowLongPtrW(h, GWL_STYLE, style | m::WS_CLIPCHILDREN);
+            allow_dark(h, w!("DarkMode_Explorer"));
         }
         let skin = Rc::new(Skin {
             theme,
@@ -644,24 +711,14 @@ impl Skin {
         );
     }
 
-    /// Uppercase, letter-spaced section label (macOS DS.label).
-    pub fn section(&self, group: u8, text: &str, x: i32, y: i32, w: i32) {
-        self.deco(
-            group,
-            (x, y, w, 16),
-            Shape::Text {
-                text: Rc::new(RefCell::new(text.to_uppercase())),
-                color: Rc::new(Cell::new(ds::FG3)),
-                font: HFONT(self.theme.section.handle as _),
-                tracking: self.px(2).round() as i32,
-                flags: DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-            },
-        );
-    }
-
     /// An icon from Segoe Fluent Icons (Windows 11) or MDL2 Assets.
     pub fn glyph(&self, group: u8, glyph: char, rect: (i32, i32, i32, i32), color: u32) {
         self.deco(group, rect, Shape::Glyph { glyph, color });
+    }
+
+    /// A bitmap already scaled to the physical size of `rect`.
+    pub fn bitmap(&self, group: u8, rect: (i32, i32, i32, i32), bitmap: &nwg::Bitmap) {
+        self.deco(group, rect, Shape::Bitmap(bitmap.handle as isize));
     }
 
     /// The app icon (the two-pulse Hlas mark).
@@ -948,13 +1005,19 @@ impl Skin {
         }
     }
 
+    /// Edits paint their own border in the non-client area whatever their
+    /// style says, so they get none: the client area is the whole control
+    /// and the rounded field around it is the frame. Text boxes scroll with
+    /// the wheel and keyboard, without a scrollbar, like on macOS.
     fn edit_look(&self, handle: &nwg::ControlHandle, bg: u32) {
+        if let Ok(h) = nwg::bind_raw_event_handler(handle, EDIT_HANDLER, |_, msg, _, _| match msg {
+            m::NCCALCSIZE | m::NCPAINT => Some(0),
+            _ => None,
+        }) {
+            self.handlers.borrow_mut().push(h);
+        }
         if let Some(h) = hwnd_of(handle) {
             unsafe {
-                let style = GetWindowLongPtrW(h, GWL_STYLE);
-                SetWindowLongPtrW(h, GWL_STYLE, style & !m::WS_BORDER);
-                let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
-                SetWindowLongPtrW(h, GWL_EXSTYLE, ex & !m::WS_EX_CLIENTEDGE);
                 let _ = SetWindowPos(
                     h,
                     HWND::default(),
@@ -964,7 +1027,6 @@ impl Skin {
                     0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
                 );
-                let _ = SetWindowTheme(h, w!("DarkMode_Explorer"), PCWSTR::null());
             }
             self.items
                 .borrow_mut()
@@ -1006,13 +1068,12 @@ impl Skin {
         let (x, y, w, h) = rect;
         let mut t = nwg::TextBox::default();
         nwg::TextBox::builder()
-            .position((x + 12, y + 8))
-            .size((w - 16, h - 14))
+            .position((x + 12, y + 9))
+            .size((w - 24, h - 18))
             .font(Some(&self.theme.body))
             .readonly(readonly)
             .flags(
                 nwg::TextBoxFlags::VISIBLE
-                    | nwg::TextBoxFlags::VSCROLL
                     | nwg::TextBoxFlags::AUTOVSCROLL
                     | nwg::TextBoxFlags::TAB_STOP,
             )
@@ -1040,7 +1101,7 @@ impl Skin {
             .build(&mut c)?;
         if let Some(h) = hwnd_of(&c.handle) {
             unsafe {
-                let _ = SetWindowTheme(h, w!("DarkMode_CFD"), PCWSTR::null());
+                allow_dark(h, w!("DarkMode_CFD"));
             }
         }
         self.page(group, &c.handle);
@@ -1083,7 +1144,7 @@ impl Skin {
                     0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
                 );
-                let _ = SetWindowTheme(hw, w!("DarkMode_Explorer"), PCWSTR::null());
+                allow_dark(hw, w!("DarkMode_Explorer"));
                 SendMessageW(
                     hw,
                     m::LB_SETITEMHEIGHT,
@@ -1196,6 +1257,7 @@ impl Skin {
                     0,
                 ),
                 Shape::Logo => c.icon(r.left, r.top, r.right - r.left),
+                Shape::Bitmap(bmp) => c.bitmap(*bmp, r),
                 _ => {}
             }
         }

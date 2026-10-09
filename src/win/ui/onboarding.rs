@@ -41,8 +41,8 @@ const WIDE: i32 = 424;
 pub struct Onboarding {
     window: nwg::Window,
     skin: Rc<Skin>,
-    panel: nwg::ImageFrame,
-    bitmaps: Vec<nwg::Bitmap>,
+    /// Kept alive: the skin paints them as the left panel.
+    _bitmaps: Vec<nwg::Bitmap>,
     title: Text,
     subtitle: Text,
     // Step 1
@@ -110,14 +110,10 @@ impl Onboarding {
         let skin = Skin::new(theme, &w, ds::BG);
         let s = &*skin;
         let bitmaps = panel_bitmaps();
-        let mut panel = nwg::ImageFrame::default();
-        nwg::ImageFrame::builder()
-            .position((0, 0))
-            .size((280, 500))
-            .bitmap(bitmaps.first())
-            .background_color(Some([15, 15, 15]))
-            .parent(&w)
-            .build(&mut panel)?;
+        s.fill(0, (0, 0, 280, 500), 0x0F0F0F);
+        for (step, b) in bitmaps.iter().enumerate() {
+            s.bitmap(step as u8 + 1, (0, 0, 280, 500), b);
+        }
 
         let title = s.label(
             0,
@@ -298,8 +294,7 @@ impl Onboarding {
         let ui = Rc::new(Onboarding {
             window: w,
             skin,
-            panel,
-            bitmaps,
+            _bitmaps: bitmaps,
             title,
             subtitle,
             mic_status,
@@ -389,9 +384,6 @@ impl Onboarding {
 
     fn go(&self, step: usize) {
         self.step.set(step);
-        if let Some(b) = self.bitmaps.get(step) {
-            self.panel.set_bitmap(Some(b));
-        }
         self.title.set_text(TITLES[step]);
         let key = hotkeys::name(state::config().hotkey_vk);
         let subtitle = match step {

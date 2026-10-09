@@ -29,14 +29,6 @@ impl Engine {
             Engine::OpenAI => "openai",
         }
     }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Engine::Local => "On this PC - private & free",
-            Engine::Groq => "Groq cloud - fastest, about $3/month",
-            Engine::OpenAI => "OpenAI cloud - best accuracy, about $8/month",
-        }
-    }
 }
 
 /// Plain transcript, or transcript reformatted by an LLM ("Smart text").
