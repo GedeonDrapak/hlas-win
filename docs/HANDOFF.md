@@ -13,6 +13,12 @@ Windows PC with a real microphone yet** - that is the next job.
      delay never flushed). Proven by `core::audio` tests.
   2. **Groq/OpenAI could never work**: `keyring` stored keys in an in-memory
      mock (missing `windows-native` feature).
+  Two more surfaced only on GitHub's real Windows machines:
+  3. The CI-built exe used **AVX-512** (whisper.cpp compiled for the runner's
+     CPU) and would crash on most laptops. Now a portable AVX2 baseline;
+     older CPUs get a "use Groq" message instead of a crash.
+  4. **Local transcription aborted at random** because of a whisper-rs bug in
+     its "safe" abort callback. Replaced with the raw callback.
   Plus a list of smaller ones (see `CHANGELOG.md`).
 - 0.2.0 is a rewrite into `src/core` (platform-independent, 40 unit tests) and
   `src/win` (Win32), with every macOS 0.4.2 feature ported.
@@ -73,6 +79,8 @@ latest CI run of `parity-0.2` (or build it). Keep
 - [ ] Idle RAM in Task Manager after start: ____ MB (target: under 30 MB).
 - [ ] RAM with the model loaded: ____ MB; it drops back about 3 minutes after the last dictation (log: "local model unloaded after idle").
 - [ ] 10 s of speech, local engine: ____ ms (log line `local inference: ... elapsed_ms=`). CPU: ______.
+- [ ] The log's `whisper.cpp:` line lists `AVX2 = 1` and `AVX512 = 0`.
+- [ ] If you can find a PC without AVX2 (old Celeron/Pentium Silver): Local shows "This processor cannot run the local engine", Groq works, nothing crashes.
 
 **Lifecycle**
 - [ ] "Start at sign-in" on, reboot: exactly one tray icon.

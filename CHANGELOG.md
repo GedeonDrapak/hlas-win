@@ -13,6 +13,14 @@ Win32 layer (`src/win`). Feature parity with Hlas for macOS 0.4.2.
   recording. Most Windows microphones run at 48 kHz.
 - **Groq and OpenAI never worked.** `keyring` was built without its
   `windows-native` backend and silently stored API keys in an in-memory mock.
+- **The CI-built exe could only run on AVX-512 processors.** whisper.cpp was
+  compiled for the GitHub runner's CPU (`GGML_NATIVE`), so it would crash with
+  an illegal instruction on most laptops. Builds now target a portable AVX2
+  baseline, and older CPUs get a message pointing to Groq instead of a crash.
+- **Local transcription aborted at random.** whisper-rs 0.16's safe abort
+  callback reads its closure back as the wrong type, so whisper.cpp polled
+  garbage and stopped the encoder ("failed to encode"). Hlas now passes its
+  cancel flag through the raw callback.
 - Recordings between 0.1 and 1 second failed inside whisper.cpp. Audio is now
   prepared like macOS: 0.25 s lead-in (no clipped first word), 1.2 s minimum,
   silent recordings skipped.

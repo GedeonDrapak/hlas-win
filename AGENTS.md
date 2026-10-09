@@ -90,6 +90,13 @@ text or keys.
    silently; `inject.rs` detects elevated targets and shows the text instead.
 5. nwg windows are built once on the UI thread and hidden on close; other
    threads use `ui::send`, never nwg directly.
-6. The release exe is a GUI-subsystem app: PowerShell does not wait for it
+6. **Never use whisper-rs `set_abort_callback_safe`** (0.16): its trampoline
+   casts the stored `Box<dyn FnMut>` to the concrete closure type and reads
+   garbage. `engine/local.rs` uses the raw callback with the cancel flag.
+7. **CPU baseline lives in `.cargo/config.toml`.** whisper-rs-sys forwards
+   every `GGML_*` variable to CMake; `GGML_NATIVE` must stay OFF or CI builds
+   for its own AVX-512 CPU. The vendored build script tracks these variables so
+   cached builds pick up changes. Run time checks AVX2/FMA/F16C.
+8. The release exe is a GUI-subsystem app: PowerShell does not wait for it
    unless you use `Start-Process -Wait`, and console output needs
    `AttachConsole` (done in `cli.rs`); prefer `--out`.

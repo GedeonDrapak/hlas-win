@@ -25,6 +25,8 @@ static HOLDER: Lazy<Mutex<Holder>> = Lazy::new(|| {
     })
 });
 
+const GPU_BUILD: bool = cfg!(feature = "vulkan");
+
 unsafe extern "C" fn abort_requested(user_data: *mut std::ffi::c_void) -> bool {
     !user_data.is_null() && (*(user_data as *const AtomicBool)).load(Ordering::Relaxed)
 }
@@ -72,7 +74,9 @@ fn load(holder: &mut Holder) -> Result<()> {
     let began = Instant::now();
     log::info!("whisper.cpp: {}", system_info().trim());
     let mut params = WhisperContextParameters::default();
-    params.use_gpu(true).flash_attn(true);
+    // Flash attention pays off on a GPU (macOS uses it with Metal) but halves
+    // CPU speed, and far worse in MSVC builds; enable it only for Vulkan.
+    params.use_gpu(GPU_BUILD).flash_attn(GPU_BUILD);
     let ctx = WhisperContext::new_with_params(
         path.to_str()
             .ok_or_else(|| anyhow!("non-UTF-8 model path"))?,
