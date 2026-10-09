@@ -67,6 +67,19 @@ fn threads() -> i32 {
     (logical / 2 + logical % 2).clamp(2, 8) as i32
 }
 
+/// QA/benchmark override: HLAS_AUDIO_CTX=auto|N. The encoder always runs a
+/// full 30 s window (1500 frames, 50 per second) however short the clip;
+/// "auto" shrinks it to the clip length plus a margin, N sets it directly.
+fn audio_ctx(n_samples: usize) -> Option<i32> {
+    let value = std::env::var("HLAS_AUDIO_CTX").ok()?;
+    let frames = if value.eq_ignore_ascii_case("auto") {
+        (n_samples as f32 / 16_000.0 * 50.0).ceil() as i32 + 64
+    } else {
+        value.parse::<i32>().ok()?
+    };
+    Some(frames.clamp(64, 1500))
+}
+
 /// Prints whisper.cpp's load/encode/decode timings to stderr (CLI benchmark).
 pub fn print_timings() {
     if let Some(ctx) = HOLDER.lock().unwrap().ctx.as_ref() {
@@ -183,6 +196,9 @@ fn run(
     };
     let mut params = FullParams::new(strategy);
     params.set_n_threads(threads());
+    if let Some(n) = audio_ctx(samples.len()) {
+        params.set_audio_ctx(n);
+    }
     params.set_translate(false);
     params.set_no_timestamps(true);
     params.set_print_progress(false);
