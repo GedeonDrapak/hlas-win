@@ -172,6 +172,11 @@ What is in place to find it:
 - On a real PC: `hlas.exe --transcribe tests\fixtures\czech-48k.wav --out out.txt`
   with `HLAS_THREADS=4`, `HLAS_GREEDY=1` prints the same breakdown.
 
+**Benchmark result (run 37910141122, MSVC build):** 1 thread greedy, 4 threads
+greedy and 4 threads beam all ran past the 300 s cap. Thread count and the
+decoder are therefore not the cause; suspect the MSVC-compiled ggml or the
+runner itself. Next: the clang job, and the same command on a real PC.
+
 If encode time dominates and clang is much faster, switch the release build to
 clang. If even a fast PC needs more than about 5 s for 10 s of speech, make
 Groq the default in the welcome tour and keep Local as the private option.
