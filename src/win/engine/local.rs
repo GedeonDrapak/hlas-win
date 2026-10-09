@@ -67,6 +67,14 @@ fn threads() -> i32 {
     (logical / 2 + logical % 2).clamp(2, 8) as i32
 }
 
+/// QA/benchmark override: HLAS_BEAM=N (default 5).
+fn beam_size() -> i32 {
+    std::env::var("HLAS_BEAM")
+        .ok()
+        .and_then(|v| v.parse::<i32>().ok())
+        .map_or(5, |n| n.clamp(1, 8))
+}
+
 /// QA/benchmark override: HLAS_AUDIO_CTX=auto|N. The encoder always runs a
 /// full 30 s window (1500 frames, 50 per second) however short the clip;
 /// "auto" shrinks it to the clip length plus a margin, N sets it directly.
@@ -190,7 +198,7 @@ fn run(
         SamplingStrategy::Greedy { best_of: 1 }
     } else {
         SamplingStrategy::BeamSearch {
-            beam_size: 5,
+            beam_size: beam_size(),
             patience: -1.0,
         }
     };
@@ -207,6 +215,11 @@ fn run(
     params.set_print_timestamps(false);
     params.set_suppress_blank(true);
     params.set_temperature(0.0);
+    // QA/benchmark override: HLAS_NO_FALLBACK=1 never re-decodes at a higher
+    // temperature when whisper.cpp judges the first pass unreliable.
+    if std::env::var_os("HLAS_NO_FALLBACK").is_some() {
+        params.set_temperature_inc(0.0);
+    }
     params.set_language(Some(language.unwrap_or("auto")));
     if let Some(prompt) = prompt {
         params.set_initial_prompt(prompt);
