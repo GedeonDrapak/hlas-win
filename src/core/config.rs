@@ -135,6 +135,8 @@ impl Config {
     }
 
     pub fn from_json(text: &str) -> Config {
+        // Notepad and PowerShell 5 write a UTF-8 BOM that serde rejects.
+        let text = text.trim_start_matches('\u{feff}');
         let mut cfg: Config = serde_json::from_str(text).unwrap_or_default();
         if let Some(old) = cfg.languages.take() {
             let old: Vec<String> = old.into_iter().filter(|l| !l.trim().is_empty()).collect();
@@ -213,6 +215,12 @@ mod tests {
             !json.contains("\"languages\""),
             "legacy field is not written back"
         );
+    }
+
+    #[test]
+    fn tolerates_a_byte_order_mark() {
+        let cfg = Config::from_json("\u{feff}{\"engine\":\"Groq\"}");
+        assert_eq!(cfg.engine, Engine::Groq);
     }
 
     #[test]

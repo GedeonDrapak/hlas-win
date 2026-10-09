@@ -50,7 +50,7 @@ impl History {
     pub fn load(path: &Path) -> History {
         let entries = std::fs::read_to_string(path)
             .ok()
-            .and_then(|t| serde_json::from_str::<Vec<Entry>>(&t).ok())
+            .and_then(|t| serde_json::from_str::<Vec<Entry>>(t.trim_start_matches('\u{feff}')).ok())
             .unwrap_or_default();
         History {
             path: path.to_path_buf(),

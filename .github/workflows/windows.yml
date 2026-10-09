@@ -170,6 +170,10 @@ jobs:
     name: Experimental GPU build (Vulkan)
     runs-on: windows-latest
     continue-on-error: true
+    env:
+      # whisper.cpp's Vulkan shader generator nests CMake projects deep enough
+      # to pass the 260-character path limit under the default target dir.
+      CARGO_TARGET_DIR: C:\t
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -193,7 +197,7 @@ jobs:
       - name: Build with Vulkan
         run: |
           cargo build --release --locked --features vulkan
-          Copy-Item target\release\hlas.exe hlas-vulkan.exe
+          Copy-Item C:\t\release\hlas.exe hlas-vulkan.exe
       - name: Upload GPU build
         uses: actions/upload-artifact@v4
         with:
