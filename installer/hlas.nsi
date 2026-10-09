@@ -1,14 +1,14 @@
 ; Hlas for Windows - NSIS installer
-; Produces Hlas-setup.exe: installs the single exe, a Start Menu shortcut, and
-; uninstall metadata. The Whisper model is downloaded by the app on first run,
-; so the installer stays tiny.
+; Produces Hlas-setup.exe: a per-user install (no administrator rights) of the
+; single hlas.exe, a Start menu shortcut and a normal Windows uninstaller. The
+; Whisper model is downloaded by the app, so the installer stays tiny.
 
 Unicode true
 !define APPNAME "Hlas"
 !define COMPANY "Gedeon Drapak"
 !define DESCRIPTION "Ultra-minimal dictation"
 !ifndef VERSION
-  !define VERSION "0.1.0"
+  !define VERSION "0.2.0"
 !endif
 !ifndef BIN_DIR
   !define BIN_DIR "..\target\release"
@@ -19,12 +19,17 @@ Unicode true
 
 Name "${APPNAME}"
 OutFile "Hlas-setup.exe"
-; A dictation helper should install without elevation. All its user data and
-; launch-at-login registry entry are already per-user.
-InstallDir "$LOCALAPPDATA\${APPNAME}"
-InstallDirRegKey HKCU "Software\${APPNAME}" "InstallDir"
+; Programs live apart from user data (%LOCALAPPDATA%\Hlas: config, history,
+; model, log), so reinstalling or uninstalling never touches them by accident.
+InstallDir "$LOCALAPPDATA\Programs\${APPNAME}"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
+VIProductVersion "${VERSION}.0"
+VIAddVersionKey "ProductName" "${APPNAME}"
+VIAddVersionKey "FileDescription" "${APPNAME} installer"
+VIAddVersionKey "ProductVersion" "${VERSION}"
+VIAddVersionKey "CompanyName" "${COMPANY}"
+VIAddVersionKey "LegalCopyright" "MIT License"
 
 !include "MUI2.nsh"
 !define MUI_ICON "..\assets\hlas.ico"
@@ -42,7 +47,22 @@ SetCompressor /SOLID lzma
 
 !insertmacro MUI_LANGUAGE "English"
 
+!define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
+
 Section "Install"
+  ; A running Hlas holds the exe open; stop it before replacing it.
+  nsExec::Exec 'taskkill /F /IM hlas.exe'
+  Sleep 400
+
+  ; 0.1.0 installed into the data folder. Remove its program files only;
+  ; config, history and the model stay where they are.
+  Delete "$LOCALAPPDATA\${APPNAME}\hlas.exe"
+  Delete "$LOCALAPPDATA\${APPNAME}\hlas.ico"
+  Delete "$LOCALAPPDATA\${APPNAME}\uninstall.exe"
+  Delete "$LOCALAPPDATA\${APPNAME}\libstdc++-6.dll"
+  Delete "$LOCALAPPDATA\${APPNAME}\libgcc_s_seh-1.dll"
+  Delete "$LOCALAPPDATA\${APPNAME}\libwinpthread-1.dll"
+
   SetOutPath "$INSTDIR"
   File "${BIN_DIR}\hlas.exe"
   File "..\assets\hlas.ico"
@@ -55,15 +75,20 @@ Section "Install"
 
   CreateShortCut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\hlas.exe" "" "$INSTDIR\hlas.ico"
 
-  WriteRegStr HKCU "Software\${APPNAME}" "InstallDir" "$INSTDIR"
+  ; Launch-at-login written by 0.1.0 points at the old location.
+  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Hlas"
+  StrCmp $0 "" +2
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Hlas" '"$INSTDIR\hlas.exe"'
 
-  ; Add/Remove Programs metadata.
-  !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
+  WriteRegStr HKCU "Software\${APPNAME}" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${APPNAME} - ${DESCRIPTION}"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\hlas.ico"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${COMPANY}"
-  WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" "$INSTDIR\uninstall.exe"
+  WriteRegStr HKCU "${UNINST_KEY}" "URLInfoAbout" "https://github.com/GedeonDrapak/hlas-win"
+  WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
+  WriteRegDWORD HKCU "${UNINST_KEY}" "EstimatedSize" 8000
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
 
@@ -71,6 +96,9 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
+  nsExec::Exec 'taskkill /F /IM hlas.exe'
+  Sleep 400
+
   Delete "$INSTDIR\hlas.exe"
   Delete "$INSTDIR\hlas.ico"
   Delete "$INSTDIR\libstdc++-6.dll"
@@ -80,10 +108,14 @@ Section "Uninstall"
   RMDir "$INSTDIR"
 
   Delete "$SMPROGRAMS\${APPNAME}.lnk"
-
-  ; Remove the per-user launch-at-login entry the app may have written.
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Hlas"
-
-  DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPNAME}"
+  DeleteRegKey HKCU "${UNINST_KEY}"
   DeleteRegKey HKCU "Software\${APPNAME}"
+
+  MessageBox MB_YESNO|MB_ICONQUESTION "Also remove your Hlas settings, dictation history, saved API keys and the downloaded model (about 550 MB)?" /SD IDNO IDNO keep_data
+    RMDir /r "$LOCALAPPDATA\${APPNAME}"
+    RMDir /r "$APPDATA\${APPNAME}"
+    nsExec::Exec 'cmdkey /delete:groq-api-key.com.gedeon.hlas'
+    nsExec::Exec 'cmdkey /delete:openai-api-key.com.gedeon.hlas'
+  keep_data:
 SectionEnd

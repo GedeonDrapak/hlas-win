@@ -1,0 +1,160 @@
+//! Local Whisper (whisper.cpp via whisper-rs).
+//!
+//! The model loads on first use (or is prefetched while the user is still
+//! speaking) and is freed `keep_alive` seconds after the last use, so idle RAM
+//! stays tiny - the same lifecycle as macOS.
+
+use super::model;
+use crate::core::errors::LocalError;
+use anyhow::{anyhow, Result};
+use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+struct Holder {
+    ctx: Option<WhisperContext>,
+    generation: u64,
+}
+
+static HOLDER: Lazy<Mutex<Holder>> = Lazy::new(|| {
+    Mutex::new(Holder {
+        ctx: None,
+        generation: 0,
+    })
+});
+
+fn threads() -> i32 {
+    // whisper.cpp scales with physical cores; logical/2 approximates them.
+    let logical = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    (logical / 2 + logical % 2).clamp(2, 8) as i32
+}
+
+fn load(holder: &mut Holder) -> Result<()> {
+    if holder.ctx.is_some() {
+        return Ok(());
+    }
+    if !model::present() {
+        return Err(LocalError::ModelMissing.into());
+    }
+    let path = model::path()?;
+    let began = Instant::now();
+    let mut params = WhisperContextParameters::default();
+    params.use_gpu(true).flash_attn(true);
+    let ctx = WhisperContext::new_with_params(
+        path.to_str()
+            .ok_or_else(|| anyhow!("non-UTF-8 model path"))?,
+        params,
+    )
+    .map_err(|e| {
+        log::error!("model load failed: {e}");
+        LocalError::ModelLoad
+    })?;
+    log::info!("local model loaded in {} ms", began.elapsed().as_millis());
+    holder.ctx = Some(ctx);
+    Ok(())
+}
+
+fn schedule_unload(holder: &mut Holder, keep_alive: u64) {
+    holder.generation += 1;
+    let generation = holder.generation;
+    if keep_alive == 0 {
+        holder.ctx = None;
+        return;
+    }
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(keep_alive));
+        let mut h = HOLDER.lock().unwrap();
+        if h.generation == generation && h.ctx.is_some() {
+            h.ctx = None;
+            log::info!("local model unloaded after idle");
+        }
+    });
+}
+
+/// Loads the model in the background while the user is still speaking.
+pub fn prepare(keep_alive: u64) {
+    std::thread::spawn(move || {
+        let mut h = HOLDER.lock().unwrap();
+        h.generation += 1;
+        if let Err(e) = load(&mut h) {
+            log::warn!("prefetch skipped: {e}");
+        }
+        // Keep it at least long enough for the dictation to finish.
+        schedule_unload(&mut h, keep_alive.max(600));
+    });
+}
+
+pub fn unload_now() {
+    let mut h = HOLDER.lock().unwrap();
+    h.generation += 1;
+    h.ctx = None;
+}
+
+pub fn transcribe(
+    samples: &[f32],
+    language: Option<&str>,
+    prompt: Option<&str>,
+    cancel: &Arc<AtomicBool>,
+    keep_alive: u64,
+) -> Result<String> {
+    let mut holder = HOLDER.lock().unwrap();
+    holder.generation += 1;
+    let result = run(&mut holder, samples, language, prompt, cancel);
+    schedule_unload(&mut holder, keep_alive);
+    result
+}
+
+fn run(
+    holder: &mut Holder,
+    samples: &[f32],
+    language: Option<&str>,
+    prompt: Option<&str>,
+    cancel: &Arc<AtomicBool>,
+) -> Result<String> {
+    let cold = holder.ctx.is_none();
+    load(holder)?;
+    let ctx = holder.ctx.as_ref().expect("loaded");
+    let mut state = ctx.create_state()?;
+
+    // Beam search decodes Czech measurably better than greedy (macOS benchmark).
+    let mut params = FullParams::new(SamplingStrategy::BeamSearch {
+        beam_size: 5,
+        patience: -1.0,
+    });
+    params.set_n_threads(threads());
+    params.set_translate(false);
+    params.set_no_timestamps(true);
+    params.set_print_progress(false);
+    params.set_print_special(false);
+    params.set_print_realtime(false);
+    params.set_print_timestamps(false);
+    params.set_suppress_blank(true);
+    params.set_temperature(0.0);
+    params.set_language(Some(language.unwrap_or("auto")));
+    if let Some(prompt) = prompt {
+        params.set_initial_prompt(prompt);
+    }
+    let abort = cancel.clone();
+    params.set_abort_callback_safe(move || abort.load(Ordering::Relaxed));
+
+    let began = Instant::now();
+    let status = state.full(params, samples);
+    if cancel.load(Ordering::Relaxed) {
+        return Err(LocalError::Cancelled.into());
+    }
+    status?;
+    let mut out = String::new();
+    for segment in state.as_iter() {
+        out.push_str(&segment.to_str_lossy()?);
+    }
+    log::info!(
+        "local inference: cold={cold} audio_s={:.1} elapsed_ms={}",
+        samples.len() as f32 / 16_000.0,
+        began.elapsed().as_millis()
+    );
+    Ok(out.trim().to_string())
+}

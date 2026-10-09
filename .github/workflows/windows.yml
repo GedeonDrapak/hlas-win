@@ -11,54 +11,194 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: windows-latest
+  core:
+    name: Core tests and shared-rule drift
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --check
+      - name: Unit tests (platform-independent core)
+        run: cargo test --locked
+      - name: Clippy (core)
+        run: cargo clippy --locked --tests -- -D warnings
+      - name: Check out Hlas for macOS
+        uses: actions/checkout@v4
+        with:
+          repository: GedeonDrapak/hlas
+          path: mac
+      - name: Shared rules match the macOS sources
+        run: python3 tools/shared_from_mac.py mac --check
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+  windows:
+    name: Build, test and package
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      # whisper-rs-sys builds whisper.cpp (needs cmake, already on the runner)
-      # and runs bindgen (needs libclang).
+      # whisper-rs-sys builds whisper.cpp (CMake is on the runner) and runs
+      # bindgen (needs libclang).
       - name: Install LLVM
         run: choco install llvm --no-progress -y
       - name: Point bindgen at libclang
         run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
 
+      - name: Clippy (Windows)
+        run: cargo clippy --release --locked -- -D warnings
       - name: Build (release)
         run: cargo build --release --locked
+      - name: Unit tests on Windows
+        run: cargo test --release --locked
+
+      # Signing runs only once Azure Artifact Signing is configured
+      # (see docs/SIGNING.md). Without it the build is unsigned.
+      - name: Azure login (signing)
+        if: ${{ vars.AZURE_SIGNING_ACCOUNT != '' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Sign hlas.exe
+        if: ${{ vars.AZURE_SIGNING_ACCOUNT != '' }}
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERTIFICATE_PROFILE }}
+          files-folder: ${{ github.workspace }}\target\release
+          files-folder-filter: exe
+          files-folder-depth: 1
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
 
       - name: Install NSIS
         run: choco install nsis --no-progress -y
-
       - name: Build installer
         working-directory: installer
         run: |
           $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
           $version = $metadata.packages[0].version
           & "C:\Program Files (x86)\NSIS\makensis.exe" "/DVERSION=$version" hlas.nsi
+      - name: Sign installer
+        if: ${{ vars.AZURE_SIGNING_ACCOUNT != '' }}
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERTIFICATE_PROFILE }}
+          files-folder: ${{ github.workspace }}\installer
+          files-folder-filter: exe
+          files-folder-depth: 1
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
 
       - name: Upload exe
         uses: actions/upload-artifact@v4
         with:
           name: hlas-exe
           path: target/release/hlas.exe
-
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: hlas-setup
           path: installer/Hlas-setup.exe
 
+      # End-to-end on real Windows. The model is cached between runs.
+      - name: Model location
+        run: |
+          echo "HLAS_DATA=$env:LOCALAPPDATA\Hlas" >> $env:GITHUB_ENV
+          echo "HLAS_MODELS=$env:LOCALAPPDATA\Hlas\models" >> $env:GITHUB_ENV
+      - name: Cache Whisper model
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.HLAS_MODELS }}
+          key: whisper-large-v3-turbo-q5_0-394221709cd5ad1f
+      - name: Download and verify the model with Hlas itself
+        run: |
+          $p = Start-Process -FilePath target\release\hlas.exe -ArgumentList "--download-model" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "model download failed" }
+      - name: Transcribe Czech audio locally
+        run: .github/scripts/e2e-transcribe.ps1
+      - name: Screenshots of every window
+        run: .github/scripts/screenshots.ps1
+      - name: Hotkey to Notepad, end to end
+        continue-on-error: true
+        run: .github/scripts/e2e-hotkey.ps1
+      - name: Upload screenshots and log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-screenshots
+          path: |
+            screenshots/
+            ${{ env.HLAS_DATA }}\debug.log
+
+      - name: Checksums
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          Get-FileHash target\release\hlas.exe, installer\Hlas-setup.exe -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content -Encoding ascii SHA256SUMS.txt
       - name: Publish GitHub release assets
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             target/release/hlas.exe
             installer/Hlas-setup.exe
+            SHA256SUMS.txt
+
+  vulkan:
+    name: Experimental GPU build (Vulkan)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: vulkan
+      - name: Install LLVM
+        run: choco install llvm --no-progress -y
+      - name: Point bindgen at libclang
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          install_runtime: true
+          cache: true
+          stripdown: true
+      - name: Show Vulkan SDK
+        run: |
+          Write-Host "VULKAN_SDK=$env:VULKAN_SDK"
+          if (-not $env:VULKAN_SDK) { throw "VULKAN_SDK is not set" }
+      - name: Build with Vulkan
+        run: |
+          cargo build --release --locked --features vulkan
+          Copy-Item target\release\hlas.exe hlas-vulkan.exe
+      - name: Upload GPU build
+        uses: actions/upload-artifact@v4
+        with:
+          name: hlas-vulkan-exe
+          path: hlas-vulkan.exe
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: hlas-vulkan.exe
