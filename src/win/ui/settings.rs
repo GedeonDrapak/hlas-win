@@ -3,7 +3,7 @@
 //! 1366x768 laptop at 125 % scaling.
 
 use super::controls::{self as c, Theme};
-use super::skin::{self, ds, Kind, Meter, Segmented, Skin, Text};
+use super::skin::{self, ds, Dropdown, Kind, Meter, Segmented, Skin, Text};
 use crate::core::config::{Engine, OutputMode};
 use crate::core::text::{format_replacements, parse_replacements};
 use crate::core::{hotkeys, languages};
@@ -74,10 +74,10 @@ pub struct SettingsWindow {
     window: nwg::Window,
     skin: Rc<Skin>,
     nav: Segmented,
-    hotkey: nwg::ComboBox<String>,
-    language: nwg::ComboBox<String>,
+    hotkey: Dropdown,
+    language: Dropdown,
     favorites: nwg::TextInput,
-    microphone: nwg::ComboBox<String>,
+    microphone: Dropdown,
     output: Segmented,
     launch: nwg::Button,
     engine: Segmented,
@@ -85,13 +85,13 @@ pub struct SettingsWindow {
     model_status: Text,
     model_button: nwg::Button,
     model_meter: Meter,
-    memory: nwg::ComboBox<String>,
+    memory: Dropdown,
     groq_key: nwg::TextInput,
     openai_key: nwg::TextInput,
     vocabulary: nwg::TextBox,
     replacements: nwg::TextBox,
     history_on: nwg::Button,
-    retention: nwg::ComboBox<String>,
+    retention: Dropdown,
     open_history: nwg::Button,
     clear_history: nwg::Button,
     open_log: nwg::Button,
@@ -232,11 +232,11 @@ impl SettingsWindow {
         let hotkey = s.combo(
             g,
             hotkeys::KEYS.iter().map(|(_, n)| n.to_string()).collect(),
-            (CTRL_X, 84 + 11, CTRL_W),
+            (CTRL_X, 84 + 9, CTRL_W),
         )?;
-        let language = s.combo(g, language_items(), (CTRL_X, 84 + ROW + 11, CTRL_W))?;
+        let language = s.combo(g, language_items(), (CTRL_X, 84 + ROW + 9, CTRL_W))?;
         let favorites = s.input(g, (CTRL_X, 84 + 2 * ROW + 9, CTRL_W, 34), false)?;
-        let microphone = s.combo(g, vec![], (CTRL_X, 84 + 3 * ROW + 11, CTRL_W))?;
+        let microphone = s.combo(g, vec![], (CTRL_X, 84 + 3 * ROW + 9, CTRL_W))?;
 
         s.card(g, (X0, 306, CW, 96));
         row_label(s, g, "Output", 306);
@@ -312,7 +312,7 @@ impl SettingsWindow {
         let memory = s.combo(
             g,
             MEMORY.iter().map(|(_, n)| n.to_string()).collect(),
-            (CTRL_X, 198 + 92 + 11, CTRL_W),
+            (CTRL_X, 198 + 92 + 9, CTRL_W),
         )?;
 
         s.card(g, (X0, 356, CW, 2 * ROW));
@@ -370,7 +370,7 @@ impl SettingsWindow {
         let retention = s.combo(
             g,
             RETENTION.iter().map(|(_, n)| n.to_string()).collect(),
-            (CTRL_X, 84 + 60 + 11, CTRL_W),
+            (CTRL_X, 84 + 60 + 9, CTRL_W),
         )?;
         let open_history = s.button(
             g,

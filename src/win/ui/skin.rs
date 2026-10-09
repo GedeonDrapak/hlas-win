@@ -54,9 +54,8 @@ mod m {
     pub const CTLCOLORLISTBOX: u32 = 0x0134;
     pub const CTLCOLORBTN: u32 = 0x0135;
     pub const CTLCOLORSTATIC: u32 = 0x0138;
-    pub const NCCALCSIZE: u32 = 0x0083;
-    pub const NCPAINT: u32 = 0x0085;
     pub const THEMECHANGED: u32 = 0x031A;
+    pub const SETFONT: u32 = 0x0030;
     pub const MOUSEMOVE: u32 = 0x0200;
     pub const LBUTTONDOWN: u32 = 0x0201;
     pub const LBUTTONDBLCLK: u32 = 0x0203;
@@ -157,7 +156,7 @@ fn allow_dark(hwnd: HWND, theme: PCWSTR) {
                     unsafe extern "system" fn() -> isize,
                     unsafe extern "system" fn(HWND, BOOL) -> BOOL,
                 >(f);
-                allow(hwnd, BOOL(1));
+                let _ = allow(hwnd, BOOL(1));
             }
         }
         let _ = SetWindowTheme(hwnd, theme, PCWSTR::null());
@@ -396,6 +395,8 @@ pub enum Kind {
     Segment,
     /// On/off switch.
     Toggle,
+    /// A field that opens a list.
+    Dropdown,
 }
 
 struct Button {
@@ -405,7 +406,10 @@ struct Button {
     group: u32,
     icon: Option<char>,
     font: HFONT,
+    menu: Option<Menu>,
 }
+
+type Menu = (Rc<RefCell<Vec<String>>>, Rc<Cell<Option<usize>>>);
 
 enum Item {
     Edit { bg: u32 },
@@ -506,6 +510,34 @@ pub const WRAP: DRAW_TEXT_FORMAT = DRAW_TEXT_FORMAT(DT_LEFT.0 | DT_WORDBREAK.0);
 pub const LINE: DRAW_TEXT_FORMAT =
     DRAW_TEXT_FORMAT(DT_LEFT.0 | DT_SINGLELINE.0 | DT_VCENTER.0 | DT_END_ELLIPSIS.0);
 
+/// A dropdown: what it lists and which entry is selected. Same calls as
+/// nwg::ComboBox, so windows read like before.
+pub struct Dropdown {
+    pub button: nwg::Button,
+    items: Rc<RefCell<Vec<String>>>,
+    selected: Rc<Cell<Option<usize>>>,
+}
+
+impl Dropdown {
+    pub fn selection(&self) -> Option<usize> {
+        self.selected.get()
+    }
+
+    pub fn set_selection(&self, index: Option<usize>) {
+        let items = self.items.borrow();
+        let index = index.filter(|i| *i < items.len());
+        self.selected.set(index);
+        self.button
+            .set_text(index.map(|i| items[i].as_str()).unwrap_or(""));
+    }
+
+    pub fn set_collection(&self, items: Vec<String>) {
+        *self.items.borrow_mut() = items;
+        self.selected.set(None);
+        self.button.set_text("");
+    }
+}
+
 /// A segmented control: one selected option.
 pub struct Segmented {
     pub buttons: Vec<nwg::Button>,
@@ -538,7 +570,6 @@ pub struct Skin {
 
 const WINDOW_HANDLER: usize = 0x1_4C41;
 const CHILD_HANDLER: usize = 0x1_4C42;
-const EDIT_HANDLER: usize = 0x1_4C43;
 
 impl Skin {
     pub fn new(theme: Rc<Theme>, window: &nwg::Window, bg: u32) -> Rc<Skin> {
@@ -792,6 +823,7 @@ impl Skin {
                     group: set,
                     icon,
                     font: HFONT(font.handle as _),
+                    menu: None,
                 }),
             );
             self.hook_button(&b.handle);
@@ -984,6 +1016,7 @@ impl Skin {
         };
         match kind {
             Kind::Toggle => self.set_on(handle, !on),
+            Kind::Dropdown => self.open_dropdown(h),
             Kind::Segment | Kind::Nav => {
                 let mut changed = Vec::new();
                 for (k, item) in self.items.borrow_mut().iter_mut() {
@@ -1005,33 +1038,48 @@ impl Skin {
         }
     }
 
-    /// Edits paint their own border in the non-client area whatever their
-    /// style says, so they get none: the client area is the whole control
-    /// and the rounded field around it is the frame. Text boxes scroll with
-    /// the wheel and keyboard, without a scrollbar, like on macOS.
-    fn edit_look(&self, handle: &nwg::ControlHandle, bg: u32) {
-        if let Ok(h) = nwg::bind_raw_event_handler(handle, EDIT_HANDLER, |_, msg, _, _| match msg {
-            m::NCCALCSIZE | m::NCPAINT => Some(0),
-            _ => None,
-        }) {
-            self.handlers.borrow_mut().push(h);
+    /// A borderless EDIT. nwg always adds WS_BORDER, and an edit created
+    /// with it draws its own frame inside the control whatever the style
+    /// says later, so these are created directly. The rounded field around
+    /// them is the frame; text boxes scroll with the wheel and keyboard,
+    /// without a scrollbar, like on macOS.
+    fn edit(&self, group: u8, rect: (i32, i32, i32, i32), style: u32) -> Result<isize, NwgError> {
+        let r = self.phys(rect);
+        let id = self.next_group.get() + 0x5000;
+        self.next_group.set(self.next_group.get() + 1);
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                w!("EDIT"),
+                w!(""),
+                WINDOW_STYLE(0x5001_0000 | style),
+                r.left,
+                r.top,
+                r.right - r.left,
+                r.bottom - r.top,
+                HWND(self.hwnd as _),
+                HMENU(id as usize as _),
+                HINSTANCE::default(),
+                None,
+            )
         }
-        if let Some(h) = hwnd_of(handle) {
-            unsafe {
-                let _ = SetWindowPos(
-                    h,
-                    HWND::default(),
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
-                );
-            }
-            self.items
-                .borrow_mut()
-                .insert(h.0 as isize, Item::Edit { bg });
+        .map_err(|e| NwgError::control_create(e.to_string()))?;
+        unsafe {
+            SendMessageW(
+                hwnd,
+                m::SETFONT,
+                WPARAM(self.theme.body.handle as usize),
+                LPARAM(1),
+            );
         }
+        let key = hwnd.0 as isize;
+        self.items
+            .borrow_mut()
+            .insert(key, Item::Edit { bg: ds::FIELD });
+        if group != 0 {
+            self.pages.borrow_mut().push((group, key));
+        }
+        Ok(key)
     }
 
     /// A single-line input inside a rounded field.
@@ -1044,16 +1092,11 @@ impl Skin {
         self.deco(group, rect, Shape::Field);
         let (x, y, w, h) = rect;
         let line = 20;
+        // ES_AUTOHSCROLL, plus ES_PASSWORD for keys.
+        let style = 0x0080 | if secret { 0x0020 } else { 0 };
+        let hwnd = self.edit(group, (x + 12, y + (h - line) / 2, w - 24, line), style)?;
         let mut t = nwg::TextInput::default();
-        nwg::TextInput::builder()
-            .position((x + 12, y + (h - line) / 2))
-            .size((w - 24, line))
-            .font(Some(&self.theme.body))
-            .password(if secret { Some('\u{2022}') } else { None })
-            .parent(self.parent)
-            .build(&mut t)?;
-        self.edit_look(&t.handle, ds::FIELD);
-        self.page(group, &t.handle);
+        t.handle = nwg::ControlHandle::Hwnd(hwnd as _);
         Ok(t)
     }
 
@@ -1066,46 +1109,91 @@ impl Skin {
     ) -> Result<nwg::TextBox, NwgError> {
         self.deco(group, rect, Shape::Field);
         let (x, y, w, h) = rect;
+        // ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN, plus ES_READONLY.
+        let style = 0x0004 | 0x0040 | 0x1000 | if readonly { 0x0800 } else { 0 };
+        let hwnd = self.edit(group, (x + 12, y + 9, w - 24, h - 18), style)?;
         let mut t = nwg::TextBox::default();
-        nwg::TextBox::builder()
-            .position((x + 12, y + 9))
-            .size((w - 24, h - 18))
-            .font(Some(&self.theme.body))
-            .readonly(readonly)
-            .flags(
-                nwg::TextBoxFlags::VISIBLE
-                    | nwg::TextBoxFlags::AUTOVSCROLL
-                    | nwg::TextBoxFlags::TAB_STOP,
-            )
-            .parent(self.parent)
-            .build(&mut t)?;
-        self.edit_look(&t.handle, ds::FIELD);
-        self.page(group, &t.handle);
+        t.handle = nwg::ControlHandle::Hwnd(hwnd as _);
         Ok(t)
     }
 
-    /// A dropdown in the dark common-file-dialog style.
+    /// A dropdown: a field-like button that opens a dark list.
     pub fn combo(
         &self,
         group: u8,
         items: Vec<String>,
         rect: (i32, i32, i32),
-    ) -> Result<nwg::ComboBox<String>, NwgError> {
-        let mut c = nwg::ComboBox::default();
-        nwg::ComboBox::builder()
-            .collection(items)
-            .position((rect.0, rect.1))
-            .size((rect.2, 30))
-            .font(Some(&self.theme.body))
-            .parent(self.parent)
-            .build(&mut c)?;
-        if let Some(h) = hwnd_of(&c.handle) {
-            unsafe {
-                allow_dark(h, w!("DarkMode_CFD"));
+    ) -> Result<Dropdown, NwgError> {
+        let items = Rc::new(RefCell::new(items));
+        let selected = Rc::new(Cell::new(None));
+        let (x, y, w) = rect;
+        let on_card = self.decos.borrow().iter().any(|d| {
+            let (cx, cy, cw, ch) = d.rect;
+            matches!(d.shape, Shape::Card)
+                && x >= cx
+                && y >= cy
+                && x + w <= cx + cw
+                && y + 34 <= cy + ch
+        });
+        let button = self.make_button(
+            group,
+            "",
+            (x, y, w, 34),
+            Kind::Dropdown,
+            if on_card { ds::SURFACE } else { self.bg },
+            0,
+            None,
+            &self.theme.body,
+        )?;
+        if let Some(h) = button.handle.hwnd() {
+            if let Some(Item::Button(b)) = self.items.borrow_mut().get_mut(&(h as isize)) {
+                b.menu = Some((items.clone(), selected.clone()));
             }
         }
-        self.page(group, &c.handle);
-        Ok(c)
+        Ok(Dropdown {
+            button,
+            items,
+            selected,
+        })
+    }
+
+    /// Opens the list of a dropdown under it and applies the choice.
+    fn open_dropdown(&self, key: isize) {
+        let Some((items, selected)) = (match self.items.borrow().get(&key) {
+            Some(Item::Button(b)) => b.menu.clone(),
+            _ => None,
+        }) else {
+            return;
+        };
+        let list = items.borrow().clone();
+        if list.is_empty() {
+            return;
+        }
+        let mut anchor = RECT::default();
+        unsafe {
+            if GetWindowRect(HWND(key as _), &mut anchor).is_err() {
+                return;
+            }
+        }
+        let choice = unsafe {
+            popup::run(
+                HWND(self.hwnd as _),
+                anchor,
+                &list,
+                selected.get(),
+                HFONT(self.theme.body.handle as _),
+                HFONT(self.theme.icon_small.handle as _),
+                self.scale,
+            )
+        };
+        if let Some(i) = choice {
+            selected.set(Some(i));
+            unsafe {
+                let text: Vec<u16> = list[i].encode_utf16().chain(std::iter::once(0)).collect();
+                let _ = SetWindowTextW(HWND(key as _), PCWSTR(text.as_ptr()));
+                invalidate(key);
+            }
+        }
     }
 
     /// A list drawn as two-line rows ("meta\ttext") inside a field.
@@ -1434,6 +1522,45 @@ impl Skin {
                 };
                 c.text(&label, full, color, b.font, centered, 0);
             }
+            Kind::Dropdown => {
+                c.rrect(0.0, 0.0, wf, hf, radius, ds::FIELD);
+                let edge = if focus {
+                    ds::BRAND
+                } else if hover || pressed {
+                    0x4A4D52
+                } else {
+                    ds::BORDER_STRONG
+                };
+                c.ring(0.0, 0.0, wf, hf, radius, 1.0, edge);
+                let text = RECT {
+                    left: (12.0 * s) as i32,
+                    top: 0,
+                    right: w - (34.0 * s) as i32,
+                    bottom: h,
+                };
+                c.text(
+                    &label,
+                    text,
+                    if disabled { ds::FG3 } else { ds::FG },
+                    b.font,
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                    0,
+                );
+                let chevron = RECT {
+                    left: w - (32.0 * s) as i32,
+                    top: 0,
+                    right: w - (10.0 * s) as i32,
+                    bottom: h,
+                };
+                c.text(
+                    "\u{E70D}",
+                    chevron,
+                    ds::FG2,
+                    HFONT(self.theme.icon_small.handle as _),
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                    0,
+                );
+            }
             Kind::Toggle => {
                 let track = if disabled {
                     ds::RAISED
@@ -1561,5 +1688,362 @@ impl Drop for Skin {
                 let _ = DeleteObject(b);
             }
         }
+    }
+}
+
+/// The list a dropdown opens: a borderless popup that never takes focus and
+/// runs a small modal loop like a menu (mouse capture; keys and the wheel are
+/// read from the loop), so Windows' own light menus never show.
+mod popup {
+    use super::{ds, invalidate, Canvas};
+    use std::sync::Once;
+    use windows::core::w;
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWINDOWATTRIBUTE};
+    use windows::Win32::Graphics::Gdi::*;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+
+    const ROWS: usize = 9;
+
+    struct List {
+        items: Vec<String>,
+        selected: Option<usize>,
+        hover: Option<usize>,
+        offset: usize,
+        rows: usize,
+        row_h: i32,
+        pad: i32,
+        scale: f32,
+        font: HFONT,
+        icons: HFONT,
+        done: bool,
+        chosen: Option<usize>,
+    }
+
+    impl List {
+        fn row_at(&self, y: i32) -> Option<usize> {
+            if y < self.pad {
+                return None;
+            }
+            let i = ((y - self.pad) / self.row_h) as usize;
+            (i < self.rows && self.offset + i < self.items.len()).then_some(self.offset + i)
+        }
+
+        fn reveal(&mut self, i: usize) {
+            if i < self.offset {
+                self.offset = i;
+            } else if i >= self.offset + self.rows {
+                self.offset = i + 1 - self.rows;
+            }
+        }
+
+        fn scroll(&mut self, by: i32) {
+            let max = self.items.len().saturating_sub(self.rows) as i32;
+            self.offset = (self.offset as i32 + by).clamp(0, max) as usize;
+        }
+
+        fn key(&mut self, vk: usize) {
+            let last = self.items.len().saturating_sub(1);
+            let at = self.hover.or(self.selected).unwrap_or(0);
+            let next = match vk {
+                0x26 => at.saturating_sub(1),         // up
+                0x28 => (at + 1).min(last),           // down
+                0x21 => at.saturating_sub(self.rows), // page up
+                0x22 => (at + self.rows).min(last),   // page down
+                0x24 => 0,                            // home
+                0x23 => last,                         // end
+                0x0D | 0x20 => {
+                    // enter, space
+                    self.chosen = Some(at);
+                    self.done = true;
+                    return;
+                }
+                0x1B | 0x09 => {
+                    // esc, tab
+                    self.done = true;
+                    return;
+                }
+                _ => return,
+            };
+            self.hover = Some(next);
+            self.reveal(next);
+        }
+
+        /// Typing a letter jumps to the next item starting with it.
+        fn jump(&mut self, c: char) {
+            let c = c.to_lowercase().next().unwrap_or(c);
+            let n = self.items.len();
+            let start = self.hover.or(self.selected).map_or(0, |i| i + 1);
+            for k in 0..n {
+                let i = (start + k) % n;
+                if self.items[i].to_lowercase().starts_with(c) {
+                    self.hover = Some(i);
+                    self.reveal(i);
+                    return;
+                }
+            }
+        }
+
+        unsafe fn paint(&self, hwnd: HWND) {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            let mut client = RECT::default();
+            let _ = GetClientRect(hwnd, &mut client);
+            if let Some(mut c) = Canvas::new(hdc, client.right, client.bottom) {
+                let s = self.scale;
+                let (w, h) = (client.right as f32, client.bottom as f32);
+                c.fill(ds::SURFACE);
+                c.ring(0.0, 0.0, w, h, 8.0 * s, 1.0, ds::BORDER_STRONG);
+                let pad = self.pad as f32;
+                for row in 0..self.rows {
+                    let i = self.offset + row;
+                    let Some(text) = self.items.get(i) else { break };
+                    let top = self.pad + row as i32 * self.row_h;
+                    if self.hover == Some(i) {
+                        c.rrect(
+                            pad,
+                            top as f32,
+                            w - 2.0 * pad,
+                            self.row_h as f32,
+                            6.0 * s,
+                            ds::RAISED,
+                        );
+                    }
+                    let r = RECT {
+                        left: self.pad + (10.0 * s) as i32,
+                        top,
+                        right: client.right - self.pad - (30.0 * s) as i32,
+                        bottom: top + self.row_h,
+                    };
+                    let color = if self.selected == Some(i) || self.hover == Some(i) {
+                        ds::FG
+                    } else {
+                        ds::FG2
+                    };
+                    c.text(
+                        text,
+                        r,
+                        color,
+                        self.font,
+                        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                        0,
+                    );
+                    if self.selected == Some(i) {
+                        let check = RECT {
+                            left: client.right - self.pad - (30.0 * s) as i32,
+                            right: client.right - self.pad - (6.0 * s) as i32,
+                            ..r
+                        };
+                        c.text(
+                            "\u{E73E}",
+                            check,
+                            ds::BRAND,
+                            self.icons,
+                            DT_CENTER | DT_SINGLELINE | DT_VCENTER,
+                            0,
+                        );
+                    }
+                }
+                if self.items.len() > self.rows {
+                    // A thin thumb shows where the visible rows are.
+                    let track = h - 2.0 * pad;
+                    let len = (track * self.rows as f32 / self.items.len() as f32).max(16.0 * s);
+                    let max = self.items.len() - self.rows;
+                    let top = pad + (track - len) * self.offset as f32 / max as f32;
+                    c.rrect(w - 5.0 * s, top, 3.0 * s, len, 1.5 * s, ds::BORDER_STRONG);
+                }
+                c.blit(hdc, 0, 0);
+            }
+            let _ = EndPaint(hwnd, &ps);
+        }
+    }
+
+    unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+        let list = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut List;
+        if list.is_null() {
+            return DefWindowProcW(hwnd, msg, w, l);
+        }
+        let list = &mut *list;
+        let x = (l.0 & 0xFFFF) as u16 as i16 as i32;
+        let y = ((l.0 >> 16) & 0xFFFF) as u16 as i16 as i32;
+        let mut client = RECT::default();
+        let _ = GetClientRect(hwnd, &mut client);
+        let inside = x >= 0 && y >= 0 && x < client.right && y < client.bottom;
+        match msg {
+            WM_PAINT => {
+                list.paint(hwnd);
+                LRESULT(0)
+            }
+            WM_ERASEBKGND => LRESULT(1),
+            WM_MOUSEACTIVATE => LRESULT(3), // MA_NOACTIVATE
+            WM_MOUSEMOVE => {
+                let row = if inside { list.row_at(y) } else { None };
+                if row.is_some() && row != list.hover {
+                    list.hover = row;
+                    invalidate(hwnd.0 as isize);
+                }
+                LRESULT(0)
+            }
+            WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
+                if inside {
+                    if let Some(i) = list.row_at(y) {
+                        list.chosen = Some(i);
+                        list.done = true;
+                    }
+                } else {
+                    list.done = true;
+                }
+                LRESULT(0)
+            }
+            WM_CAPTURECHANGED => {
+                list.done = true;
+                LRESULT(0)
+            }
+            _ => DefWindowProcW(hwnd, msg, w, l),
+        }
+    }
+
+    static REGISTER: Once = Once::new();
+
+    /// Shows the list under `anchor` (screen pixels) and returns the chosen
+    /// index, or None when dismissed.
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn run(
+        owner: HWND,
+        anchor: RECT,
+        items: &[String],
+        selected: Option<usize>,
+        font: HFONT,
+        icons: HFONT,
+        scale: f32,
+    ) -> Option<usize> {
+        let Ok(module) = GetModuleHandleW(None) else {
+            return None;
+        };
+        REGISTER.call_once(|| {
+            let class = WNDCLASSW {
+                style: CS_DROPSHADOW,
+                lpfnWndProc: Some(wndproc),
+                hInstance: module.into(),
+                lpszClassName: w!("HlasDropdown"),
+                hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+                ..Default::default()
+            };
+            RegisterClassW(&class);
+        });
+        let rows = items.len().min(ROWS);
+        let row_h = (32.0 * scale).round() as i32;
+        let pad = (5.0 * scale).round() as i32;
+        let width = anchor.right - anchor.left;
+        let height = rows as i32 * row_h + 2 * pad;
+        let gap = (4.0 * scale).round() as i32;
+        let mut y = anchor.bottom + gap;
+        let monitor = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(monitor, &mut info).as_bool() && y + height > info.rcWork.bottom {
+            y = anchor.top - gap - height;
+        }
+
+        let mut list = Box::new(List {
+            items: items.to_vec(),
+            selected,
+            hover: selected,
+            offset: 0,
+            rows,
+            row_h,
+            pad,
+            scale,
+            font,
+            icons,
+            done: false,
+            chosen: None,
+        });
+        if let Some(i) = selected {
+            list.reveal(i);
+            list.offset = list
+                .offset
+                .max(i.saturating_sub(rows / 2))
+                .min(items.len().saturating_sub(rows));
+        }
+        let Ok(hwnd) = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+            w!("HlasDropdown"),
+            w!(""),
+            WS_POPUP,
+            anchor.left,
+            y,
+            width,
+            height,
+            owner,
+            None,
+            module,
+            None,
+        ) else {
+            return None;
+        };
+        let raw = Box::into_raw(list);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, raw as isize);
+        let round = 2u32; // DWMWCP_ROUND
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWINDOWATTRIBUTE(33),
+            &round as *const u32 as *const std::ffi::c_void,
+            4,
+        );
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        SetCapture(hwnd);
+
+        let mut msg = MSG::default();
+        while !(*raw).done && GetCapture() == hwnd {
+            let got = GetMessageW(&mut msg, None, 0, 0);
+            if got.0 <= 0 {
+                if got.0 == 0 {
+                    PostQuitMessage(msg.wParam.0 as i32);
+                }
+                break;
+            }
+            match msg.message {
+                WM_KEYDOWN | WM_SYSKEYDOWN => {
+                    let vk = msg.wParam.0;
+                    (*raw).key(vk);
+                    if (0x30..=0x5A).contains(&vk) {
+                        // Letters and digits come back as WM_CHAR for jump().
+                        let _ = TranslateMessage(&msg);
+                    }
+                    invalidate(hwnd.0 as isize);
+                    continue;
+                }
+                WM_CHAR => {
+                    if let Some(c) =
+                        char::from_u32(msg.wParam.0 as u32).filter(|c| c.is_alphanumeric())
+                    {
+                        (*raw).jump(c);
+                        invalidate(hwnd.0 as isize);
+                    }
+                    continue;
+                }
+                WM_KEYUP | WM_SYSKEYUP | WM_SYSCHAR => continue,
+                WM_MOUSEWHEEL => {
+                    let delta = ((msg.wParam.0 >> 16) & 0xFFFF) as u16 as i16 as i32;
+                    (*raw).scroll(if delta > 0 { -3 } else { 3 });
+                    invalidate(hwnd.0 as isize);
+                    continue;
+                }
+                _ => {}
+            }
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        if GetCapture() == hwnd {
+            let _ = ReleaseCapture();
+        }
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+        let _ = DestroyWindow(hwnd);
+        Box::from_raw(raw).chosen
     }
 }

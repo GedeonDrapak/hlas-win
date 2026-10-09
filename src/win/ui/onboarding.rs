@@ -4,7 +4,7 @@
 //! side uses the shared dark skin.
 
 use super::controls::{self as c, Theme};
-use super::skin::{self, ds, Kind, Meter, Segmented, Skin, Text};
+use super::skin::{self, ds, Dropdown, Kind, Meter, Segmented, Skin, Text};
 use crate::core::config::Engine;
 use crate::core::{hotkeys, languages};
 use crate::win::engine::model;
@@ -47,7 +47,7 @@ pub struct Onboarding {
     subtitle: Text,
     // Step 1
     mic_status: Text,
-    mic_choice: nwg::ComboBox<String>,
+    mic_choice: Dropdown,
     mic_test: nwg::Button,
     mic_meter: Meter,
     mic_privacy: nwg::Button,
@@ -59,7 +59,7 @@ pub struct Onboarding {
     model_meter: Meter,
     key_label: Text,
     key: nwg::TextInput,
-    language: nwg::ComboBox<String>,
+    language: Dropdown,
     // Step 3
     try_box: nwg::TextBox,
     last: Text,
@@ -178,7 +178,7 @@ impl Onboarding {
         s.label(
             2,
             "Microphone",
-            (X + 18, 134 + 58, 100, 30),
+            (X + 18, 134 + 58, 100, 34),
             &t.body,
             ds::FG2,
             skin::LINE,
@@ -240,7 +240,7 @@ impl Onboarding {
         s.label(
             3,
             "Language",
-            (X, 322, 100, 30),
+            (X, 322, 100, 34),
             &t.body,
             ds::FG2,
             skin::LINE,
