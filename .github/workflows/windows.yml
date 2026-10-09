@@ -230,6 +230,8 @@ jobs:
       CMAKE_GENERATOR: Ninja
       CMAKE_C_COMPILER: clang-cl
       CMAKE_CXX_COMPILER: clang-cl
+      # cmake-rs replaces CMake's default C++ flags; ggml needs exceptions.
+      CXXFLAGS: /EHsc
       CARGO_TARGET_DIR: C:\c
     steps:
       - uses: actions/checkout@v4

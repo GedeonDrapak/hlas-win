@@ -68,6 +68,7 @@ fn init_logging() {
 pub fn main() -> i32 {
     let args: Vec<String> = std::env::args().collect();
     if cli::wants_cli(&args) {
+        super::power::disable_throttling();
         return cli::run(&args);
     }
 
@@ -77,6 +78,7 @@ pub fn main() -> i32 {
     };
     init_logging();
     log::info!("Hlas for Windows {} starting", env!("CARGO_PKG_VERSION"));
+    super::power::disable_throttling();
 
     let config = Config::load();
     state::init(config.clone());

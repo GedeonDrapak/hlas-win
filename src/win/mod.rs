@@ -12,6 +12,7 @@ pub mod inject;
 pub mod keystore;
 pub mod mic;
 pub mod overlay;
+pub mod power;
 pub mod privacy;
 pub mod shell;
 pub mod single_instance;
