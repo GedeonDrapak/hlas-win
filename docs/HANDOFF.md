@@ -163,7 +163,36 @@ legal identity). Once the secrets exist, CI signs automatically.
   MSVC and clang are now equal, so the release build stays on MSVC. The
   hotkey-to-Notepad end-to-end step passes for the first time. Still about
   6x slower than the Mac (7 s): the Mac build uses Accelerate, and the runner
-  is a weak shared VM. A real laptop number is still needed (section 3).
+  is a weak shared VM.
+- **Real laptop numbers** (i7-13620H 6P+4E, on AC, "High performance" plan,
+  RTX 5070 Laptop + Intel UHD; CI-built exes run under Smart App Control,
+  only the local `cargo build` is blocked). Wall time per dictation,
+  default settings (beam 5, 8 threads), model already cached:
+
+  | Build / device | 6.1 s fixture | 10 s Czech VO | 25 s Czech VO |
+  |---|---|---|---|
+  | `hlas.exe` CPU (MSVC, fixed) | 14.1 s | 35.7 s | 27.4 s |
+  | `hlas-vulkan.exe` on RTX 5070 | 10.4 s (first run, shader warm-up) | **1.6 s** | **1.5 s** |
+  | `hlas-vulkan.exe` on Intel UHD (`GGML_VK_VISIBLE_DEVICES=1`) | 25.0 s | 18.3 s | 20.2 s |
+  | CPU + `HLAS_AUDIO_CTX=auto` | 4.8 s, **repeats the last sentence** | 12.1 s | 26.1 s |
+
+  Transcripts are identical across CPU and both GPUs. Conclusions:
+  1. On CPU even a fast laptop misses the "10 s of speech in under 5 s"
+     target by 3-7x. Time does not grow with clip length (10 s slower than
+     25 s), which points at the decoder/temperature fallback rather than the
+     encoder.
+  2. The Vulkan build on a dedicated GPU matches the Mac (Metal, 1-1.5 s).
+     It is the real fix for PCs with an NVIDIA/AMD GPU. Intel iGPU gains
+     nothing over the CPU.
+  3. `HLAS_AUDIO_CTX` (shrinking the 30 s encoder window) helps only very
+     short clips and makes whisper repeat text. Keep it as a QA switch only,
+     do not make it the default.
+  4. Product decision for Gedeon: ship the Vulkan build as the main exe (it
+     falls back to the CPU when no GPU is usable - to verify), and on
+     CPU-only PCs make Groq the default in the welcome tour with Local as
+     the private, slower option.
+- `HLAS_AUDIO_CTX=auto|N` added to `engine/local.rs` as a benchmark override
+  next to `HLAS_THREADS` and `HLAS_GREEDY`.
 - **Smart App Control blocks Hlas entirely, not just a SmartScreen warning.**
   On a PC with Smart App Control on, every unsigned binary without cloud
   reputation is blocked with no "Run anyway" (CodeIntegrity events 3077/3118).
