@@ -142,13 +142,43 @@ legal identity). Once the secrets exist, CI signs automatically.
 
 (empty - fill in)
 
-## 9. CI outcome at handoff
+## 9. CI outcome at handoff (2026-10-09, Windows Server runner, 4 vCPU)
 
-(updated below by the session that wrote this file)
+| Check | Result |
+|---|---|
+| Core tests (Linux, Windows), drift vs macOS rules | pass |
+| Release build, clippy, installer (`hlas.exe` 3.9 MB, `Hlas-setup.exe` 3.0 MB) | pass |
+| Vulkan build (`hlas-vulkan.exe`, 20 MB) | builds, not run on a GPU |
+| Model download through Hlas + SHA-256 | pass |
+| Local Czech transcription | **correct text, but 870 s for 6 s of audio** |
+| Hotkey to Notepad | pipeline runs (hook, fake mic, model load), text not pasted within the 2 min limit because of the slow engine |
+| Screenshots | first upload failed (fixed); see `qa-screenshots` of the latest run |
+
+**The open problem (your first task): local engine speed on Windows.**
+Same model, same settings on a Mac CPU with 2 threads: 7 s and the identical
+transcript. On the Windows runner: 870 s. Already ruled out or fixed: random
+encoder aborts (whisper-rs callback bug), AVX-512 build, flash attention
+(off on CPU now). Not yet known: MSVC-compiled ggml vs clang, thread
+scheduling, or the runner itself.
+
+What is in place to find it:
+- `.github/scripts/bench.ps1` runs 1 thread / all threads / beam with
+  whisper.cpp's own timing breakdown (encode vs decode). Results are in the
+  "Benchmark the local engine" step of run 37910141122 and later.
+- CI job "Local engine built with clang" builds ggml with clang-cl + Ninja
+  for comparison (fixed `/EHsc` in the last commit, not yet run).
+- Process power throttling (EcoQoS) is now disabled, in case Windows parks
+  the work on slow cores.
+- On a real PC: `hlas.exe --transcribe tests\fixtures\czech-48k.wav --out out.txt`
+  with `HLAS_THREADS=4`, `HLAS_GREEDY=1` prints the same breakdown.
+
+If encode time dominates and clang is much faster, switch the release build to
+clang. If even a fast PC needs more than about 5 s for 10 s of speech, make
+Groq the default in the welcome tour and keep Local as the private option.
 
 ## 10. Backlog after 0.2.0
 
-1. Hardware test (section 3), fix what it finds, release 0.2.0.
+1. Local engine speed on Windows (section 9), then the hardware test (section 3), then release 0.2.0.
 2. Signing (section 6).
 3. winget manifest (`winget-pkgs`), once releases are signed.
 4. Benchmark the Vulkan build; if it is reliably faster, offer it in the installer.
