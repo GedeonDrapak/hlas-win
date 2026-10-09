@@ -129,7 +129,12 @@ jobs:
         run: |
           $p = Start-Process -FilePath target\release\hlas.exe -ArgumentList "--download-model" -Wait -PassThru -NoNewWindow
           if ($p.ExitCode -ne 0) { throw "model download failed" }
+      - name: Benchmark the local engine
+        continue-on-error: true
+        timeout-minutes: 20
+        run: .github/scripts/bench.ps1
       - name: Transcribe Czech audio locally
+        timeout-minutes: 15
         run: .github/scripts/e2e-transcribe.ps1
       - name: Screenshots of every window
         if: ${{ !cancelled() }}
@@ -137,19 +142,23 @@ jobs:
       - name: Hotkey to Notepad, end to end
         if: ${{ !cancelled() }}
         continue-on-error: true
+        timeout-minutes: 15
         run: .github/scripts/e2e-hotkey.ps1
       # Last, so a new lint in a newer toolchain never hides the e2e results.
       - name: Clippy (Windows)
         run: cargo clippy --release --locked -- -D warnings
 
+      - name: Collect the app log
+        if: always()
+        run: |
+          New-Item -ItemType Directory -Force -Path screenshots | Out-Null
+          Copy-Item "$env:HLAS_DATA\debug.log" screenshots\ -ErrorAction SilentlyContinue
       - name: Upload screenshots and log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: qa-screenshots
-          path: |
-            screenshots/
-            ${{ env.HLAS_DATA }}\debug.log
+          path: screenshots/
 
       - name: Checksums
         if: startsWith(github.ref, 'refs/tags/v')
@@ -210,3 +219,52 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: hlas-vulkan.exe
+
+  clang:
+    name: Local engine built with clang (speed comparison)
+    runs-on: windows-latest
+    continue-on-error: true
+    env:
+      # whisper-rs-sys forwards CMAKE_* to whisper.cpp's CMake: build ggml
+      # with clang through Ninja instead of MSVC through MSBuild.
+      CMAKE_GENERATOR: Ninja
+      CMAKE_C_COMPILER: clang-cl
+      CMAKE_CXX_COMPILER: clang-cl
+      CARGO_TARGET_DIR: C:\c
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clang
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Install LLVM and Ninja
+        run: choco install llvm ninja --no-progress -y
+      - name: Point bindgen at libclang
+        run: |
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+      - name: Build
+        run: cargo build --release --locked
+      - name: Model location
+        run: echo "HLAS_MODELS=$env:LOCALAPPDATA\Hlas\models" >> $env:GITHUB_ENV
+      - name: Cache Whisper model
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.HLAS_MODELS }}
+          key: whisper-large-v3-turbo-q5_0-394221709cd5ad1f
+      - name: Download model
+        run: |
+          $p = Start-Process -FilePath C:\c\release\hlas.exe -ArgumentList "--download-model" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "model download failed" }
+      - name: Benchmark the local engine
+        timeout-minutes: 20
+        run: .github/scripts/bench.ps1 -Exe C:\c\release\hlas.exe
+      - name: Transcribe Czech audio locally
+        timeout-minutes: 15
+        run: .github/scripts/e2e-transcribe.ps1 -Exe C:\c\release\hlas.exe
+      - name: Upload clang build
+        uses: actions/upload-artifact@v4
+        with:
+          name: hlas-exe-clang
+          path: C:\c\release\hlas.exe

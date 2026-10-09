@@ -87,7 +87,12 @@ pub fn run(args: &[String]) -> i32 {
             .ok_or_else(|| anyhow::anyhow!("audio is too short or silent"))?;
         if cfg.engine == Engine::Local {
             eprintln!("whisper.cpp: {}", engine::local::system_info().trim());
-            eprintln!("cpu supported: {}", engine::local::cpu_supported());
+            eprintln!(
+                "cpu supported: {}, threads: {}, greedy: {}",
+                engine::local::cpu_supported(),
+                engine::local::thread_count(),
+                std::env::var_os("HLAS_GREEDY").is_some()
+            );
         }
         let began = std::time::Instant::now();
         let raw = engine::transcribe(&cfg, &prepared, &cancel)?;
@@ -97,6 +102,9 @@ pub fn run(args: &[String]) -> i32 {
             began.elapsed().as_millis(),
             cfg.engine.id()
         );
+        if cfg.engine == Engine::Local {
+            engine::local::print_timings();
+        }
         let mut out = text::apply_replacements(&cfg.replacements, &raw);
         if text::filter_hallucination(&raw).is_empty() {
             eprintln!("warning: transcript looks like background audio");

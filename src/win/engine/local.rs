@@ -53,11 +53,29 @@ pub fn system_info() -> &'static str {
 }
 
 fn threads() -> i32 {
+    // QA/benchmark override: HLAS_THREADS=N.
+    if let Some(n) = std::env::var("HLAS_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<i32>().ok())
+    {
+        return n.clamp(1, 64);
+    }
     // whisper.cpp scales with physical cores; logical/2 approximates them.
     let logical = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
     (logical / 2 + logical % 2).clamp(2, 8) as i32
+}
+
+/// Prints whisper.cpp's load/encode/decode timings to stderr (CLI benchmark).
+pub fn print_timings() {
+    if let Some(ctx) = HOLDER.lock().unwrap().ctx.as_ref() {
+        ctx.print_timings();
+    }
+}
+
+pub fn thread_count() -> i32 {
+    threads()
 }
 
 fn load(holder: &mut Holder) -> Result<()> {
@@ -154,10 +172,16 @@ fn run(
     let mut state = ctx.create_state()?;
 
     // Beam search decodes Czech measurably better than greedy (macOS benchmark).
-    let mut params = FullParams::new(SamplingStrategy::BeamSearch {
-        beam_size: 5,
-        patience: -1.0,
-    });
+    // QA/benchmark override: HLAS_GREEDY=1 decodes greedily.
+    let strategy = if std::env::var_os("HLAS_GREEDY").is_some() {
+        SamplingStrategy::Greedy { best_of: 1 }
+    } else {
+        SamplingStrategy::BeamSearch {
+            beam_size: 5,
+            patience: -1.0,
+        }
+    };
+    let mut params = FullParams::new(strategy);
     params.set_n_threads(threads());
     params.set_translate(false);
     params.set_no_timestamps(true);
