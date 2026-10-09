@@ -9,6 +9,7 @@ mod history;
 mod onboarding;
 mod result;
 mod settings;
+mod skin;
 
 use native_windows_gui as nwg;
 use once_cell::sync::OnceCell;

@@ -1,7 +1,9 @@
-//! Settings: dictation, engine, vocabulary, replacements, history, about.
-//! Two columns so it fits a 1366x768 laptop at 125 % scaling.
+//! Settings, in the macOS look: a sidebar (Dictation, Engine, Vocabulary,
+//! History, About) and one page of cards at a time. 780x540, so it fits a
+//! 1366x768 laptop at 125 % scaling.
 
 use super::controls::{self as c, Theme};
+use super::skin::{self, ds, Kind, Meter, Segmented, Skin, Text};
 use crate::core::config::{Engine, OutputMode};
 use crate::core::text::{format_replacements, parse_replacements};
 use crate::core::{hotkeys, languages};
@@ -23,27 +25,72 @@ const RETENTION: [(u32, &str); 4] = [
     (7, "7 days"),
     (30, "30 days"),
 ];
+const ENGINES: [Engine; 3] = [Engine::Local, Engine::Groq, Engine::OpenAI];
+
+// Layout, in logical pixels.
+const WIDTH: i32 = 780;
+const HEIGHT: i32 = 540;
+const SIDEBAR: i32 = 200;
+const X0: i32 = 228;
+const CW: i32 = 524;
+const PAD: i32 = 18;
+const ROW: i32 = 52;
+const CTRL_W: i32 = 250;
+const CTRL_X: i32 = X0 + CW - PAD - CTRL_W;
+
+const PAGES: [(char, &str, &str); 5] = [
+    ('\u{E720}', "Dictation", "How you talk to Hlas."),
+    (
+        '\u{E945}',
+        "Engine",
+        "Where speech turns into text. API keys stay in Windows Credential Manager.",
+    ),
+    (
+        '\u{E8D2}',
+        "Vocabulary",
+        "Help Hlas spell names, brands and jargon.",
+    ),
+    (
+        '\u{E81C}',
+        "History",
+        "Stored only on this PC, never synced.",
+    ),
+    ('\u{E946}', "About", "Dictation. Not typing."),
+];
+
+fn engine_note(engine: Engine) -> &'static str {
+    match engine {
+        Engine::Local => {
+            "Runs on this PC. Private, free and offline after a one-time 547 MB download."
+        }
+        Engine::Groq => "Groq cloud. The fastest, about $3 a month with your own key.",
+        Engine::OpenAI => {
+            "OpenAI cloud. Best accuracy and vocabulary, about $8 a month with your own key."
+        }
+    }
+}
 
 pub struct SettingsWindow {
     window: nwg::Window,
+    skin: Rc<Skin>,
+    nav: Segmented,
     hotkey: nwg::ComboBox<String>,
     language: nwg::ComboBox<String>,
     favorites: nwg::TextInput,
-    output: nwg::ComboBox<String>,
     microphone: nwg::ComboBox<String>,
-    launch: nwg::CheckBox,
-    local: nwg::RadioButton,
-    groq: nwg::RadioButton,
-    openai: nwg::RadioButton,
-    model_status: nwg::Label,
+    output: Segmented,
+    launch: nwg::Button,
+    engine: Segmented,
+    engine_note: Text,
+    model_status: Text,
     model_button: nwg::Button,
-    model_progress: nwg::ProgressBar,
+    model_meter: Meter,
     memory: nwg::ComboBox<String>,
     groq_key: nwg::TextInput,
     openai_key: nwg::TextInput,
     vocabulary: nwg::TextBox,
     replacements: nwg::TextBox,
-    history_on: nwg::CheckBox,
+    history_on: nwg::Button,
     retention: nwg::ComboBox<String>,
     open_history: nwg::Button,
     clear_history: nwg::Button,
@@ -51,11 +98,10 @@ pub struct SettingsWindow {
     privacy: nwg::Button,
     updates: nwg::Button,
     save: nwg::Button,
-    status: nwg::Label,
+    status: Text,
     timer: nwg::AnimationTimer,
     mic_names: RefCell<Vec<String>>,
     clear_armed: Cell<bool>,
-    _static: Vec<nwg::Label>,
     handler: RefCell<Option<nwg::EventHandler>>,
 }
 
@@ -85,179 +131,337 @@ fn language_index(code: &str) -> usize {
         .unwrap_or(0)
 }
 
+/// A row label inside a card, vertically centred in the row.
+fn row_label(skin: &Skin, group: u8, text: &str, top: i32) {
+    let t = skin.theme.clone();
+    skin.label(
+        group,
+        text,
+        (X0 + PAD, top, CTRL_X - X0 - PAD - 12, ROW),
+        &t.body,
+        ds::FG,
+        skin::LINE,
+    );
+}
+
+/// Title and switch row (60 high) with a muted second line.
+#[allow(clippy::too_many_arguments)]
+fn switch_row(
+    skin: &Skin,
+    group: u8,
+    title: &str,
+    detail: &str,
+    top: i32,
+) -> Result<nwg::Button, NwgError> {
+    let t = skin.theme.clone();
+    skin.label(
+        group,
+        title,
+        (X0 + PAD, top + 10, CW - 2 * PAD - 60, 22),
+        &t.medium,
+        ds::FG,
+        skin::LINE,
+    );
+    skin.label(
+        group,
+        detail,
+        (X0 + PAD, top + 32, CW - 2 * PAD - 60, 18),
+        &t.small,
+        ds::FG3,
+        skin::LINE,
+    );
+    skin.toggle(group, X0 + CW - PAD - 40, top + 19, ds::SURFACE, false)
+}
+
 impl SettingsWindow {
     pub fn build(theme: Rc<Theme>) -> Result<Rc<SettingsWindow>, NwgError> {
-        let t = &*theme;
-        let w = c::window(t, "Hlas Settings", (780, 570), false)?;
-        let mut stat = Vec::new();
-        let (lx, rx) = (24, 410);
-        let section =
-            |text: &str, x: i32, y: i32| c::label(&w, text, (x, y), (340, 18), &t.section);
+        let t = theme.clone();
+        let w = c::window(&t, "Hlas Settings", (WIDTH, HEIGHT), false)?;
+        let skin = Skin::new(theme, &w, ds::BG);
+        let s = &*skin;
 
-        // Left column: dictation.
-        stat.push(section("DICTATION", lx, 18)?);
-        stat.push(c::label(
-            &w,
+        // Sidebar.
+        s.fill(0, (0, 0, SIDEBAR, HEIGHT), ds::SIDEBAR);
+        s.fill(0, (SIDEBAR, 0, 1, HEIGHT), ds::BORDER);
+        s.logo(0, 20, 24, 26);
+        s.tracked(0, "HLAS", (56, 22, 130, 30), &t.wordmark, ds::FG, 4);
+        s.tracked(
+            0,
+            "DICTATION. NOT TYPING.",
+            (20, 60, 175, 16),
+            &t.section,
+            ds::BRAND,
+            2,
+        );
+        let nav_items: Vec<(char, &str)> = PAGES.iter().map(|(i, n, _)| (*i, *n)).collect();
+        let nav = s.nav(&nav_items, 12, 98, SIDEBAR - 24, ds::SIDEBAR)?;
+        s.label(
+            0,
+            &format!("Version {}", env!("CARGO_PKG_VERSION")),
+            (20, HEIGHT - 34, 170, 18),
+            &t.small,
+            ds::FG3,
+            skin::LINE,
+        );
+
+        // Page titles.
+        for (i, (_, name, detail)) in PAGES.iter().enumerate() {
+            let g = i as u8 + 1;
+            s.label(g, name, (X0, 20, CW, 30), &t.heading, ds::FG, skin::LINE);
+            s.label(g, detail, (X0, 52, CW, 20), &t.small, ds::FG3, skin::LINE);
+        }
+
+        // 1. Dictation.
+        let g = 1;
+        s.card(g, (X0, 84, CW, 4 * ROW));
+        for (i, name) in [
             "Push-to-talk key",
-            (lx, 46),
-            (150, 22),
-            &t.body,
-        )?);
-        let hotkey = c::combo(
-            &w,
-            hotkeys::KEYS.iter().map(|(_, n)| n.to_string()).collect(),
-            None,
-            (lx + 160, 42),
-            196,
-            &t.body,
-        )?;
-        stat.push(c::label(&w, "Language", (lx, 80), (150, 22), &t.body)?);
-        let language = c::combo(&w, language_items(), None, (lx + 160, 76), 196, &t.body)?;
-        stat.push(c::label(
-            &w,
+            "Language",
             "Tray languages",
-            (lx, 114),
-            (150, 22),
-            &t.body,
-        )?);
-        let favorites = c::input(&w, "", (lx + 160, 110), (196, 26), &t.body, false)?;
-        stat.push(c::label(&w, "Output", (lx, 148), (150, 22), &t.body)?);
-        let output = c::combo(
-            &w,
-            vec!["Transcript".into(), "Smart text".into()],
-            None,
-            (lx + 160, 144),
-            196,
-            &t.body,
+            "Microphone",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let top = 84 + i as i32 * ROW;
+            row_label(s, g, name, top);
+            if i > 0 {
+                s.rule(g, X0 + PAD, top, CW - 2 * PAD);
+            }
+        }
+        let hotkey = s.combo(
+            g,
+            hotkeys::KEYS.iter().map(|(_, n)| n.to_string()).collect(),
+            (CTRL_X, 84 + 11, CTRL_W),
         )?;
-        stat.push(c::label(
-            &w,
-            "Hold Shift when you start to get a plain transcript once.",
-            (lx, 174),
-            (356, 18),
+        let language = s.combo(g, language_items(), (CTRL_X, 84 + ROW + 11, CTRL_W))?;
+        let favorites = s.input(g, (CTRL_X, 84 + 2 * ROW + 9, CTRL_W, 34), false)?;
+        let microphone = s.combo(g, vec![], (CTRL_X, 84 + 3 * ROW + 11, CTRL_W))?;
+
+        s.card(g, (X0, 306, CW, 96));
+        row_label(s, g, "Output", 306);
+        let output = s.segmented(
+            g,
+            &["Transcript", "Smart text"],
+            (CTRL_X, 306 + 9, CTRL_W, 34),
+            0,
+        )?;
+        s.label(
+            g,
+            "Smart text cleans up punctuation and turns spoken lists into bullets. Hold Shift when you start for a plain transcript once.",
+            (X0 + PAD, 306 + ROW, CW - 2 * PAD, 36),
             &t.small,
-        )?);
-        stat.push(c::label(&w, "Microphone", (lx, 202), (150, 22), &t.body)?);
-        let microphone = c::combo(&w, vec![], None, (lx + 160, 198), 196, &t.body)?;
-        let launch = c::check(
-            &w,
-            t,
+            ds::FG3,
+            skin::WRAP,
+        );
+
+        s.card(g, (X0, 416, CW, 60));
+        let launch = switch_row(
+            s,
+            g,
             "Start Hlas when I sign in",
-            (lx, 234),
-            (356, 24),
-            false,
+            "Keep dictation ready in the tray.",
+            416,
         )?;
 
-        // Left column: engine.
-        stat.push(section("ENGINE", lx, 274)?);
-        let local = c::radio(&w, t, Engine::Local.label(), (lx, 296), (356, 24), true)?;
-        let groq = c::radio(&w, t, Engine::Groq.label(), (lx, 320), (356, 24), false)?;
-        let openai = c::radio(&w, t, Engine::OpenAI.label(), (lx, 344), (356, 24), false)?;
-        let model_status = c::label(&w, "", (lx, 378), (236, 22), &t.small)?;
-        let model_button = c::button(&w, "Download", (lx + 240, 372), (116, 28), &t.body)?;
-        let model_progress = c::progress(&w, (lx, 404), (356, 6))?;
-        stat.push(c::label(&w, "Model memory", (lx, 422), (150, 22), &t.body)?);
-        let memory = c::combo(
-            &w,
+        // 2. Engine.
+        let g = 2;
+        s.card(g, (X0, 84, CW, 100));
+        let engine = s.segmented(
+            g,
+            &["On this PC", "Groq", "OpenAI"],
+            (X0 + PAD, 84 + PAD, CW - 2 * PAD, 36),
+            0,
+        )?;
+        let engine_note = s.label(
+            g,
+            "",
+            (X0 + PAD, 84 + 62, CW - 2 * PAD, 34),
+            &t.small,
+            ds::FG2,
+            skin::WRAP,
+        );
+
+        s.card(g, (X0, 198, CW, 144));
+        s.label(
+            g,
+            "Local model",
+            (X0 + PAD, 198 + 14, 260, 22),
+            &t.medium,
+            ds::FG,
+            skin::LINE,
+        );
+        let model_status = s.label(
+            g,
+            "",
+            (X0 + PAD, 198 + 38, CW - 2 * PAD - 140, 34),
+            &t.small,
+            ds::FG2,
+            skin::WRAP,
+        );
+        let model_button = s.button(
+            g,
+            "Download",
+            (X0 + CW - PAD - 120, 198 + 18, 120, 34),
+            Kind::Secondary,
+            ds::SURFACE,
+        )?;
+        let model_meter = s.meter(g, (X0 + PAD, 198 + 78, CW - 2 * PAD, 4));
+        s.rule(g, X0 + PAD, 198 + 92, CW - 2 * PAD);
+        row_label(s, g, "Model memory", 198 + 92);
+        let memory = s.combo(
+            g,
             MEMORY.iter().map(|(_, n)| n.to_string()).collect(),
-            None,
-            (lx + 160, 418),
-            196,
-            &t.body,
+            (CTRL_X, 198 + 92 + 11, CTRL_W),
         )?;
-        stat.push(c::label(&w, "Groq API key", (lx, 458), (150, 22), &t.body)?);
-        let groq_key = c::input(&w, "", (lx + 160, 454), (196, 26), &t.body, true)?;
-        stat.push(c::label(
-            &w,
-            "OpenAI API key",
-            (lx, 492),
-            (150, 22),
-            &t.body,
-        )?);
-        let openai_key = c::input(&w, "", (lx + 160, 488), (196, 26), &t.body, true)?;
-        stat.push(c::label(
-            &w,
-            "Keys stay in Windows Credential Manager.",
-            (lx, 518),
-            (356, 18),
-            &t.small,
-        )?);
 
-        // Right column.
-        stat.push(section("VOCABULARY", rx, 18)?);
-        stat.push(c::label(
-            &w,
-            "Names and jargon to recognize, one per line.",
-            (rx, 38),
-            (346, 18),
-            &t.small,
-        )?);
-        let vocabulary = c::text_box(&w, (rx, 58), (346, 92), &t.body, false)?;
-        stat.push(section("REPLACEMENTS", rx, 162)?);
-        stat.push(c::label(
-            &w,
-            "Exact spellings, one per line:  eden makers => Edenmakers",
-            (rx, 182),
-            (346, 18),
-            &t.small,
-        )?);
-        let replacements = c::text_box(&w, (rx, 202), (346, 92), &t.body, false)?;
-        stat.push(section("HISTORY", rx, 308)?);
-        let history_on = c::check(
-            &w,
-            t,
-            "Save dictation history on this PC",
-            (rx, 328),
-            (346, 24),
-            true,
+        s.card(g, (X0, 356, CW, 2 * ROW));
+        row_label(s, g, "Groq API key", 356);
+        let groq_key = s.input(g, (CTRL_X, 356 + 9, CTRL_W, 34), true)?;
+        s.rule(g, X0 + PAD, 356 + ROW, CW - 2 * PAD);
+        row_label(s, g, "OpenAI API key", 356 + ROW);
+        let openai_key = s.input(g, (CTRL_X, 356 + ROW + 9, CTRL_W, 34), true)?;
+
+        // 3. Vocabulary.
+        let g = 3;
+        let mut boxes = Vec::new();
+        for (i, (name, help)) in [
+            ("Words to recognize", "One per line: names, brands, jargon."),
+            ("Replacements", "One per line:   eden makers => Edenmakers"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let top = 84 + i as i32 * 206;
+            s.card(g, (X0, top, CW, 192));
+            s.label(
+                g,
+                name,
+                (X0 + PAD, top + 14, CW - 2 * PAD, 22),
+                &t.medium,
+                ds::FG,
+                skin::LINE,
+            );
+            s.label(
+                g,
+                help,
+                (X0 + PAD, top + 36, CW - 2 * PAD, 18),
+                &t.small,
+                ds::FG3,
+                skin::LINE,
+            );
+            boxes.push(s.text_box(g, (X0 + PAD, top + 62, CW - 2 * PAD, 114), false)?);
+        }
+        let replacements = boxes.pop().expect("two boxes");
+        let vocabulary = boxes.pop().expect("two boxes");
+
+        // 4. History.
+        let g = 4;
+        s.card(g, (X0, 84, CW, 60 + ROW));
+        let history_on = switch_row(
+            s,
+            g,
+            "Save dictation history",
+            "Search, copy and reformat past dictations.",
+            84,
         )?;
-        stat.push(c::label(&w, "Keep history", (rx, 362), (130, 22), &t.body)?);
-        let retention = c::combo(
-            &w,
+        s.rule(g, X0 + PAD, 84 + 60, CW - 2 * PAD);
+        row_label(s, g, "Keep history", 84 + 60);
+        let retention = s.combo(
+            g,
             RETENTION.iter().map(|(_, n)| n.to_string()).collect(),
-            None,
-            (rx + 150, 358),
-            196,
-            &t.body,
+            (CTRL_X, 84 + 60 + 11, CTRL_W),
         )?;
-        let open_history = c::button(&w, "Open history", (rx, 394), (168, 30), &t.body)?;
-        let clear_history = c::button(&w, "Clear history", (rx + 178, 394), (168, 30), &t.body)?;
-        stat.push(section("ABOUT", rx, 438)?);
-        stat.push(c::label(
-            &w,
-            &format!("Hlas for Windows {}", env!("CARGO_PKG_VERSION")),
-            (rx, 458),
-            (346, 20),
-            &t.body,
-        )?);
-        let open_log = c::button(&w, "Log folder", (rx, 482), (110, 28), &t.small)?;
-        let privacy = c::button(&w, "Privacy", (rx + 118, 482), (110, 28), &t.small)?;
-        let updates = c::button(
-            &w,
-            "Check for updates",
-            (rx + 236, 482),
-            (110, 28),
-            &t.small,
+        let open_history = s.button(
+            g,
+            "Open history",
+            (X0, 214, 160, 36),
+            Kind::Secondary,
+            ds::BG,
+        )?;
+        let clear_history = s.button(
+            g,
+            "Clear history",
+            (X0 + 172, 214, 190, 36),
+            Kind::Danger,
+            ds::BG,
         )?;
 
-        let status = c::label(&w, "", (rx, 528), (220, 22), &t.small)?;
-        let save = c::button(&w, "Save", (rx + 236, 522), (110, 32), &t.bold)?;
+        // 5. About.
+        let g = 5;
+        s.card(g, (X0, 84, CW, 128));
+        s.logo(g, X0 + PAD, 84 + 18, 40);
+        s.label(
+            g,
+            &format!("Hlas for Windows {}", env!("CARGO_PKG_VERSION")),
+            (X0 + 72, 84 + 18, CW - 90, 22),
+            &t.bold,
+            ds::FG,
+            skin::LINE,
+        );
+        s.label(
+            g,
+            "Free, local, no account. Hold a key, speak, release.",
+            (X0 + 72, 84 + 40, CW - 90, 20),
+            &t.small,
+            ds::FG2,
+            skin::LINE,
+        );
+        let open_log = s.button(
+            g,
+            "Log folder",
+            (X0 + PAD, 84 + 76, 130, 34),
+            Kind::Secondary,
+            ds::SURFACE,
+        )?;
+        let privacy = s.button(
+            g,
+            "Privacy",
+            (X0 + PAD + 140, 84 + 76, 110, 34),
+            Kind::Secondary,
+            ds::SURFACE,
+        )?;
+        let updates = s.button(
+            g,
+            "Check for updates",
+            (X0 + PAD + 260, 84 + 76, 170, 34),
+            Kind::Secondary,
+            ds::SURFACE,
+        )?;
+
+        // Footer.
+        let status = s.label(
+            0,
+            "",
+            (X0, HEIGHT - 50, CW - 140, 36),
+            &t.small,
+            ds::FG2,
+            skin::LINE,
+        );
+        let save = s.button(
+            0,
+            "Save",
+            (X0 + CW - 120, HEIGHT - 50, 120, 36),
+            Kind::Primary,
+            ds::BG,
+        )?;
         let timer = c::timer(&w, 400)?;
 
         let ui = Rc::new(SettingsWindow {
             window: w,
+            skin,
+            nav,
             hotkey,
             language,
             favorites,
-            output,
             microphone,
+            output,
             launch,
-            local,
-            groq,
-            openai,
+            engine,
+            engine_note,
             model_status,
             model_button,
-            model_progress,
+            model_meter,
             memory,
             groq_key,
             openai_key,
@@ -275,14 +479,17 @@ impl SettingsWindow {
             timer,
             mic_names: RefCell::new(Vec::new()),
             clear_armed: Cell::new(false),
-            _static: stat,
             handler: RefCell::new(None),
         });
+        ui.show_page(0);
 
         let weak = Rc::downgrade(&ui);
         let handler = nwg::full_bind_event_handler(&ui.window.handle, move |evt, data, handle| {
             let Some(ui) = weak.upgrade() else { return };
             use nwg::Event as E;
+            if evt == E::OnButtonClick {
+                ui.skin.click(&handle);
+            }
             match evt {
                 E::OnWindowClose if handle == ui.window.handle => {
                     if let nwg::EventData::OnWindowClose(d) = data {
@@ -290,6 +497,10 @@ impl SettingsWindow {
                     }
                     ui.window.set_visible(false);
                 }
+                E::OnButtonClick if ui.nav.index_of(&handle).is_some() => {
+                    ui.show_page(ui.nav.index_of(&handle).unwrap_or(0))
+                }
+                E::OnButtonClick if ui.engine.index_of(&handle).is_some() => ui.refresh_engine(),
                 E::OnButtonClick if handle == ui.save.handle => ui.save(),
                 E::OnButtonClick if handle == ui.model_button.handle => {
                     if model::status().active {
@@ -338,6 +549,11 @@ impl SettingsWindow {
         c::present(&self.window);
     }
 
+    fn show_page(&self, index: usize) {
+        self.skin.select(&self.nav, index);
+        self.skin.set_visible(1u64 << (index + 1));
+    }
+
     /// Fills every control from the current config.
     fn load(&self) {
         let cfg = state::config();
@@ -350,12 +566,14 @@ impl SettingsWindow {
         self.language
             .set_selection(Some(language_index(&cfg.language)));
         self.favorites.set_text(&cfg.favorite_languages.join(", "));
-        self.output
-            .set_selection(Some(if cfg.output_mode == OutputMode::Smart {
+        self.skin.select(
+            &self.output,
+            if cfg.output_mode == OutputMode::Smart {
                 1
             } else {
                 0
-            }));
+            },
+        );
 
         let mut names = vec![String::new()];
         names.extend(mic::device_names());
@@ -381,10 +599,12 @@ impl SettingsWindow {
         );
         *self.mic_names.borrow_mut() = names;
 
-        c::set_checked(&self.launch, autostart::is_enabled());
-        c::set_radio(&self.local, cfg.engine == Engine::Local);
-        c::set_radio(&self.groq, cfg.engine == Engine::Groq);
-        c::set_radio(&self.openai, cfg.engine == Engine::OpenAI);
+        self.skin
+            .set_on(&self.launch.handle, autostart::is_enabled());
+        self.skin.select(
+            &self.engine,
+            ENGINES.iter().position(|e| *e == cfg.engine).unwrap_or(0),
+        );
         self.memory.set_selection(Some(
             MEMORY
                 .iter()
@@ -397,7 +617,8 @@ impl SettingsWindow {
             .set_text(&keystore::get_key(keystore::OPENAI).unwrap_or_default());
         c::set_box_text(&self.vocabulary, &cfg.vocabulary.join("\n"));
         c::set_box_text(&self.replacements, &format_replacements(&cfg.replacements));
-        c::set_checked(&self.history_on, cfg.history_enabled);
+        self.skin
+            .set_on(&self.history_on.handle, cfg.history_enabled);
         self.retention.set_selection(Some(
             RETENTION
                 .iter()
@@ -407,23 +628,32 @@ impl SettingsWindow {
         self.clear_armed.set(false);
         self.clear_history.set_text("Clear history");
         self.status.set_text("");
+        self.refresh_engine();
         self.refresh_model();
+    }
+
+    fn engine(&self) -> Engine {
+        ENGINES[self.skin.selected(&self.engine).min(ENGINES.len() - 1)]
+    }
+
+    fn refresh_engine(&self) {
+        self.engine_note.set_text(engine_note(self.engine()));
     }
 
     fn refresh_model(&self) {
         let s = model::status();
         if !crate::win::engine::local::cpu_supported() {
             self.model_status
-                .set_text("This processor cannot run Local. Use Groq or OpenAI.");
+                .set_text("This processor cannot run the local engine. Use Groq or OpenAI.");
             self.model_button.set_text("Unavailable");
             self.model_button.set_enabled(false);
-            self.model_progress.set_pos(0);
+            self.model_meter.set(0.0);
         } else if model::present() {
             self.model_status
-                .set_text("Local model ready (547 MB, large-v3-turbo)");
+                .set_text("Ready. large-v3-turbo, 547 MB, works offline.");
             self.model_button.set_text("Ready");
             self.model_button.set_enabled(false);
-            self.model_progress.set_pos(100);
+            self.model_meter.set(1.0);
         } else if s.active {
             let text = if s.verifying {
                 "Verifying download...".to_string()
@@ -433,26 +663,20 @@ impl SettingsWindow {
             self.model_status.set_text(&text);
             self.model_button.set_text("Cancel");
             self.model_button.set_enabled(true);
-            self.model_progress.set_pos(s.percent as u32);
+            self.model_meter.set(s.percent as f32 / 100.0);
         } else {
             let text = s
                 .error
-                .unwrap_or_else(|| "Local engine needs a one-time 547 MB download.".into());
+                .unwrap_or_else(|| "The local engine needs a one-time 547 MB download.".into());
             self.model_status.set_text(&text);
             self.model_button.set_text("Download");
             self.model_button.set_enabled(true);
-            self.model_progress.set_pos(0);
+            self.model_meter.set(0.0);
         }
     }
 
     fn save(&self) {
-        let engine = if c::radio_on(&self.groq) {
-            Engine::Groq
-        } else if c::radio_on(&self.openai) {
-            Engine::OpenAI
-        } else {
-            Engine::Local
-        };
+        let engine = self.engine();
         let hotkey = self
             .hotkey
             .selection()
@@ -461,7 +685,7 @@ impl SettingsWindow {
             .unwrap_or(hotkeys::DEFAULT_VK);
         let language = language_code(self.language.selection().unwrap_or(0));
         let favorites = languages::parse_list(&self.favorites.text());
-        let output = if self.output.selection() == Some(1) {
+        let output = if self.skin.selected(&self.output) == 1 {
             OutputMode::Smart
         } else {
             OutputMode::Transcript
@@ -489,8 +713,8 @@ impl SettingsWindow {
             .and_then(|i| RETENTION.get(i))
             .map(|(d, _)| *d)
             .unwrap_or(0);
-        let history_on = c::is_checked(&self.history_on);
-        let launch = c::is_checked(&self.launch);
+        let history_on = self.skin.is_on(&self.history_on.handle);
+        let launch = self.skin.is_on(&self.launch.handle);
 
         keystore::persist(keystore::GROQ, &self.groq_key.text());
         keystore::persist(keystore::OPENAI, &self.openai_key.text());
@@ -513,18 +737,20 @@ impl SettingsWindow {
             cfg.history_enabled = history_on;
             cfg.launch_at_login = launch;
         });
-        let warning = match engine {
+        let (warning, color) = match engine {
             Engine::Groq if !keystore::has_key(keystore::GROQ) => {
-                "Saved. Add a Groq key to use Groq."
+                ("Saved. Add a Groq key to use Groq.", ds::DANGER)
             }
             Engine::OpenAI if !keystore::has_key(keystore::OPENAI) => {
-                "Saved. Add an OpenAI key to use OpenAI."
+                ("Saved. Add an OpenAI key to use OpenAI.", ds::DANGER)
             }
-            Engine::Local if !model::present() && !model::status().active => {
-                "Saved. Download the model to use Local."
-            }
-            _ => "Saved.",
+            Engine::Local if !model::present() && !model::status().active => (
+                "Saved. Download the model to use the local engine.",
+                ds::DANGER,
+            ),
+            _ => ("Saved.", ds::BRAND),
         };
+        self.status.set_color(color);
         self.status.set_text(warning);
         self.load_favorites_only();
     }

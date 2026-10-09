@@ -3,6 +3,7 @@
 //! audio file import). The text is editable and one click copies it.
 
 use super::controls::{self as c, Theme};
+use super::skin::{self, ds, Kind, Skin, Text};
 use crate::win::clipboard;
 use native_windows_gui as nwg;
 use nwg::NwgError;
@@ -11,36 +12,54 @@ use std::rc::Rc;
 
 pub struct ResultWindow {
     window: nwg::Window,
-    message: nwg::Label,
+    skin: Rc<Skin>,
+    message: Text,
     text: nwg::TextBox,
-    show_original: nwg::CheckBox,
+    show_original: nwg::Button,
+    original_label: Text,
     copy: nwg::Button,
     close: nwg::Button,
     content: RefCell<(String, String)>,
     handler: RefCell<Option<nwg::EventHandler>>,
 }
 
+/// Group of the "show original" switch, shown only when there is one.
+const ORIGINAL: u8 = 1;
+
 impl ResultWindow {
     pub fn build(theme: Rc<Theme>) -> Result<Rc<ResultWindow>, NwgError> {
-        let t = &*theme;
-        let w = c::window(t, "Your text", (580, 420), false)?;
-        let message = c::label(&w, "", (24, 18), (532, 44), &t.body)?;
-        let text = c::text_box(&w, (24, 68), (532, 262), &t.body, false)?;
-        let show_original = c::check(
-            &w,
-            t,
+        let t = theme.clone();
+        let w = c::window(&t, "Your text", (580, 420), false)?;
+        let skin = Skin::new(theme, &w, ds::BG);
+        let s = &*skin;
+        s.label(
+            0,
+            "Your text",
+            (24, 18, 532, 30),
+            &t.heading,
+            ds::FG,
+            skin::LINE,
+        );
+        let message = s.label(0, "", (24, 50, 532, 40), &t.body, ds::FG2, skin::WRAP);
+        let text = s.text_box(0, (24, 94, 532, 236), false)?;
+        let show_original = s.toggle(ORIGINAL, 24, 350, ds::BG, false)?;
+        let original_label = s.label(
+            ORIGINAL,
             "Show original transcript",
-            (24, 344),
-            (260, 26),
-            false,
-        )?;
-        let close = c::button(&w, "Close", (328, 366), (110, 34), &t.body)?;
-        let copy = c::button(&w, "Copy text", (446, 366), (110, 34), &t.bold)?;
+            (74, 344, 220, 34),
+            &t.body,
+            ds::FG2,
+            skin::LINE,
+        );
+        let close = s.button(0, "Close", (330, 362, 110, 38), Kind::Ghost, ds::BG)?;
+        let copy = s.button(0, "Copy text", (446, 362, 110, 38), Kind::Primary, ds::BG)?;
         let ui = Rc::new(ResultWindow {
             window: w,
+            skin,
             message,
             text,
             show_original,
+            original_label,
             copy,
             close,
             content: RefCell::new((String::new(), String::new())),
@@ -50,6 +69,9 @@ impl ResultWindow {
         let handler = nwg::full_bind_event_handler(&ui.window.handle, move |evt, data, handle| {
             let Some(ui) = weak.upgrade() else { return };
             use nwg::Event as E;
+            if evt == E::OnButtonClick {
+                ui.skin.click(&handle);
+            }
             match evt {
                 E::OnWindowClose if handle == ui.window.handle => {
                     if let nwg::EventData::OnWindowClose(d) = data {
@@ -64,12 +86,10 @@ impl ResultWindow {
                 }
                 E::OnButtonClick if handle == ui.show_original.handle => {
                     let (text, original) = ui.content.borrow().clone();
-                    let shown = if c::is_checked(&ui.show_original) {
-                        original
-                    } else {
-                        text
-                    };
-                    c::set_box_text(&ui.text, &shown);
+                    let original_on = ui.skin.is_on(&ui.show_original.handle);
+                    ui.original_label
+                        .set_color(if original_on { ds::FG } else { ds::FG2 });
+                    c::set_box_text(&ui.text, if original_on { &original } else { &text });
                     ui.copy.set_text("Copy text");
                 }
                 _ => {}
@@ -83,8 +103,10 @@ impl ResultWindow {
         *self.content.borrow_mut() = (text.to_string(), original.to_string());
         self.message.set_text(message);
         c::set_box_text(&self.text, text);
-        c::set_checked(&self.show_original, false);
-        self.show_original.set_visible(original != text);
+        self.skin.set_on(&self.show_original.handle, false);
+        self.original_label.set_color(ds::FG2);
+        self.skin
+            .set_visible(if original != text { 1 << ORIGINAL } else { 0 });
         self.copy.set_text("Copy text");
         c::present(&self.window);
         // Keep it above the app the user was dictating into.

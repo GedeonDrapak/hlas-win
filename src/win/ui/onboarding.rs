@@ -1,8 +1,10 @@
 //! Welcome tour, ported from the macOS onboarding: Welcome, Microphone,
 //! Engine & language, Try it. The left panel is a pre-rendered image per step
-//! (tools/render_assets.py) so it matches the macOS split layout.
+//! (tools/render_assets.py) so it matches the macOS split layout; the right
+//! side uses the shared dark skin.
 
 use super::controls::{self as c, Theme};
+use super::skin::{self, ds, Kind, Meter, Segmented, Skin, Text};
 use crate::core::config::Engine;
 use crate::core::{hotkeys, languages};
 use crate::win::engine::model;
@@ -28,38 +30,40 @@ const TITLES: [&str; 4] = [
     "Try it now",
 ];
 
+// Visibility groups: steps 0-3 are groups 1-4; on the engine step the model
+// row (local) or the key field (cloud) is added.
+const LOCAL: u8 = 6;
+const CLOUD: u8 = 7;
+const ENGINES: [Engine; 3] = [Engine::Local, Engine::Groq, Engine::OpenAI];
+const X: i32 = 312;
+const WIDE: i32 = 424;
+
 pub struct Onboarding {
     window: nwg::Window,
+    skin: Rc<Skin>,
     panel: nwg::ImageFrame,
     bitmaps: Vec<nwg::Bitmap>,
-    title: nwg::Label,
-    subtitle: nwg::Label,
-    // Step 0
-    features: Vec<nwg::Label>,
+    title: Text,
+    subtitle: Text,
     // Step 1
-    mic_status: nwg::Label,
-    mic_label: nwg::Label,
+    mic_status: Text,
     mic_choice: nwg::ComboBox<String>,
     mic_test: nwg::Button,
-    mic_meter: nwg::ProgressBar,
+    mic_meter: Meter,
     mic_privacy: nwg::Button,
-    mic_hint: nwg::Label,
     // Step 2
-    local: nwg::RadioButton,
-    groq: nwg::RadioButton,
-    openai: nwg::RadioButton,
-    model_status: nwg::Label,
+    engine: Segmented,
+    engine_note: Text,
+    model_status: Text,
     model_button: nwg::Button,
-    model_progress: nwg::ProgressBar,
-    key_label: nwg::Label,
+    model_meter: Meter,
+    key_label: Text,
     key: nwg::TextInput,
-    lang_label: nwg::Label,
     language: nwg::ComboBox<String>,
     // Step 3
     try_box: nwg::TextBox,
-    last: nwg::Label,
-    launch: nwg::CheckBox,
-    tips: nwg::Label,
+    last: Text,
+    launch: nwg::Button,
     // Footer
     back: nwg::Button,
     next: nwg::Button,
@@ -91,10 +95,20 @@ fn panel_bitmaps() -> Vec<nwg::Bitmap> {
         .collect()
 }
 
+fn engine_note(engine: Engine) -> &'static str {
+    match engine {
+        Engine::Local => "Runs on this PC. Private, free and offline after a one-time download.",
+        Engine::Groq => "Groq cloud. The fastest, about $3 a month with your own key.",
+        Engine::OpenAI => "OpenAI cloud. Best accuracy, about $8 a month with your own key.",
+    }
+}
+
 impl Onboarding {
     pub fn build(theme: Rc<Theme>) -> Result<Rc<Onboarding>, NwgError> {
-        let t = &*theme;
-        let w = c::window(t, "Welcome to Hlas", (760, 500), false)?;
+        let t = theme.clone();
+        let w = c::window(&t, "Welcome to Hlas", (760, 500), false)?;
+        let skin = Skin::new(theme, &w, ds::BG);
+        let s = &*skin;
         let bitmaps = panel_bitmaps();
         let mut panel = nwg::ImageFrame::default();
         nwg::ImageFrame::builder()
@@ -105,114 +119,205 @@ impl Onboarding {
             .parent(&w)
             .build(&mut panel)?;
 
-        let x = 312;
-        let wide = 420;
-        let title = c::label(&w, TITLES[0], (x, 30), (wide, 40), &t.title)?;
-        let subtitle = c::label(&w, "", (x, 76), (wide, 44), &t.body)?;
+        let title = s.label(
+            0,
+            TITLES[0],
+            (X, 32, WIDE, 40),
+            &t.title,
+            ds::FG,
+            skin::LINE,
+        );
+        let subtitle = s.label(0, "", (X, 76, WIDE, 44), &t.body, ds::FG2, skin::WRAP);
 
+        // Step 0: what Hlas is.
         let key = hotkeys::name(state::config().hotkey_vk);
-        let feature_text = [
-            format!("Hold {key} and speak Czech or English. Release, and the text pastes at your cursor in any app."),
-            format!("Quick-tap {key} to keep listening hands-free. Tap again to stop. Esc cancels."),
-            "Local by default: audio never leaves this PC. Cloud engines are opt-in.".to_string(),
-            "A tiny app. The model loads when you dictate and unloads when you stop.".to_string(),
+        let features = [
+            (
+                '\u{E720}',
+                format!(
+                    "Hold {key} and speak. Release, and the text pastes at your cursor in any app."
+                ),
+            ),
+            (
+                '\u{E7C9}',
+                format!(
+                    "Quick-tap {key} to keep listening hands-free. Tap again to stop. Esc cancels."
+                ),
+            ),
+            (
+                '\u{E72E}',
+                "Local by default: audio never leaves this PC. Cloud engines are opt-in."
+                    .to_string(),
+            ),
+            (
+                '\u{E945}',
+                "A tiny app. The model loads when you dictate and unloads when you stop."
+                    .to_string(),
+            ),
         ];
-        let mut features = Vec::new();
-        for (i, f) in feature_text.iter().enumerate() {
-            features.push(c::label(
-                &w,
-                &format!("\u{2022}  {f}"),
-                (x, 134 + i as i32 * 58),
-                (wide, 50),
+        for (i, (icon, text)) in features.iter().enumerate() {
+            let y = 134 + i as i32 * 72;
+            s.card(1, (X, y, WIDE, 62));
+            s.glyph(1, *icon, (X + 12, y, 32, 62), ds::BRAND);
+            s.label(
+                1,
+                text,
+                (X + 52, y + 11, WIDE - 66, 42),
                 &t.body,
-            )?);
+                ds::FG,
+                skin::WRAP,
+            );
         }
 
-        let mic_status = c::label(&w, "", (x, 132), (wide, 44), &t.bold)?;
-        let mic_label = c::label(&w, "Microphone", (x, 190), (110, 22), &t.body)?;
-        let mic_choice = c::combo(&w, vec![], None, (x + 116, 186), wide - 116, &t.body)?;
-        let mic_test = c::button(&w, "Test microphone", (x, 230), (150, 32), &t.body)?;
-        let mic_meter = c::progress(&w, (x + 164, 243), (wide - 164, 8))?;
-        let mic_privacy = c::button(
-            &w,
-            "Open microphone privacy settings",
-            (x, 276),
-            (260, 32),
+        // Step 1: microphone.
+        s.card(2, (X, 134, WIDE, 158));
+        let mic_status = s.label(
+            2,
+            "",
+            (X + 18, 134 + 14, WIDE - 36, 40),
+            &t.medium,
+            ds::FG,
+            skin::WRAP,
+        );
+        s.label(
+            2,
+            "Microphone",
+            (X + 18, 134 + 58, 100, 30),
             &t.body,
+            ds::FG2,
+            skin::LINE,
+        );
+        let mic_choice = s.combo(2, vec![], (X + 120, 134 + 58, WIDE - 138))?;
+        let mic_test = s.button(
+            2,
+            "Test microphone",
+            (X + 18, 134 + 106, 150, 34),
+            Kind::Secondary,
+            ds::SURFACE,
         )?;
-        let mic_hint = c::label(
-            &w,
+        let mic_meter = s.meter(2, (X + 186, 134 + 121, WIDE - 204, 4));
+        let mic_privacy = s.button(
+            2,
+            "Open microphone privacy settings",
+            (X, 304, 272, 34),
+            Kind::Ghost,
+            ds::BG,
+        )?;
+        s.label(
+            2,
             "Hlas listens only while you hold the key. Windows shows a microphone icon in the taskbar while it is in use.",
-            (x, 322),
-            (wide, 44),
+            (X, 350, WIDE, 40),
             &t.small,
-        )?;
+            ds::FG3,
+            skin::WRAP,
+        );
 
-        let local = c::radio(&w, t, Engine::Local.label(), (x, 132), (wide, 24), true)?;
-        let groq = c::radio(&w, t, Engine::Groq.label(), (x, 158), (wide, 24), false)?;
-        let openai = c::radio(&w, t, Engine::OpenAI.label(), (x, 184), (wide, 24), false)?;
-        let model_status = c::label(&w, "", (x, 226), (290, 22), &t.small)?;
-        let model_button = c::button(&w, "Download", (x + 300, 220), (120, 30), &t.body)?;
-        let model_progress = c::progress(&w, (x, 256), (wide, 6))?;
-        let key_label = c::label(&w, "API key", (x, 226), (80, 22), &t.body)?;
-        let key_input = c::input(&w, "", (x + 90, 222), (wide - 90, 26), &t.body, true)?;
-        let lang_label = c::label(&w, "Language", (x, 290), (90, 22), &t.body)?;
+        // Step 2: engine and language.
+        let engine = s.segmented(3, &["On this PC", "Groq", "OpenAI"], (X, 134, WIDE, 36), 0)?;
+        let engine_note = s.label(3, "", (X, 178, WIDE, 36), &t.small, ds::FG2, skin::WRAP);
+        s.card(3, (X, 222, WIDE, 84));
+        let model_status = s.label(
+            LOCAL,
+            "",
+            (X + 18, 222 + 14, WIDE - 176, 38),
+            &t.small,
+            ds::FG2,
+            skin::WRAP,
+        );
+        let model_button = s.button(
+            LOCAL,
+            "Download",
+            (X + WIDE - 138, 222 + 14, 120, 34),
+            Kind::Secondary,
+            ds::SURFACE,
+        )?;
+        let model_meter = s.meter(LOCAL, (X + 18, 222 + 64, WIDE - 36, 4));
+        let key_label = s.label(
+            CLOUD,
+            "API key",
+            (X + 18, 222 + 12, WIDE - 36, 20),
+            &t.small,
+            ds::FG2,
+            skin::LINE,
+        );
+        let key_input = s.input(CLOUD, (X + 18, 222 + 38, WIDE - 36, 34), true)?;
+        s.label(
+            3,
+            "Language",
+            (X, 322, 100, 30),
+            &t.body,
+            ds::FG2,
+            skin::LINE,
+        );
         let lang_items: Vec<String> = std::iter::once(languages::AUTO)
             .chain(languages::ALL.iter().copied())
             .map(|(code, name)| format!("{name} ({code})"))
             .collect();
-        let language = c::combo(&w, lang_items, None, (x + 90, 286), wide - 90, &t.body)?;
+        let language = s.combo(3, lang_items, (X + 110, 322, WIDE - 110))?;
 
-        let try_box = c::text_box(&w, (x, 132), (wide, 110), &t.body, false)?;
-        let last = c::label(&w, "", (x, 252), (wide, 44), &t.small)?;
-        let launch = c::check(
-            &w,
-            t,
+        // Step 3: try it.
+        let try_box = s.text_box(4, (X, 134, WIDE, 108), false)?;
+        let last = s.label(4, "", (X, 250, WIDE, 38), &t.small, ds::FG2, skin::WRAP);
+        s.card(4, (X, 296, WIDE, 60));
+        s.label(
+            4,
             "Start Hlas when I sign in",
-            (x, 302),
-            (wide, 24),
-            false,
-        )?;
-        let tips = c::label(
-            &w,
-            "Add names and jargon in Settings > Vocabulary.\nThe tray icon opens Settings, History and this tour.",
-            (x, 336),
-            (wide, 44),
+            (X + 18, 296 + 10, WIDE - 96, 22),
+            &t.medium,
+            ds::FG,
+            skin::LINE,
+        );
+        s.label(
+            4,
+            "Keep dictation ready in the tray.",
+            (X + 18, 296 + 32, WIDE - 96, 18),
             &t.small,
-        )?;
+            ds::FG3,
+            skin::LINE,
+        );
+        let launch = s.toggle(4, X + WIDE - 58, 296 + 19, ds::SURFACE, false)?;
+        s.label(
+            4,
+            "Add names and jargon in Settings > Vocabulary. The tray icon opens Settings, History and this tour.",
+            (X, 368, WIDE, 40),
+            &t.small,
+            ds::FG3,
+            skin::WRAP,
+        );
 
-        let back = c::button(&w, "Back", (x, 444), (100, 34), &t.body)?;
-        let next = c::button(&w, "Continue", (x + wide - 140, 444), (140, 34), &t.bold)?;
+        let back = s.button(0, "Back", (X, 444, 100, 36), Kind::Ghost, ds::BG)?;
+        let next = s.button(
+            0,
+            "Continue",
+            (X + WIDE - 170, 444, 170, 36),
+            Kind::Primary,
+            ds::BG,
+        )?;
         let timer = c::timer(&w, 100)?;
 
         let ui = Rc::new(Onboarding {
             window: w,
+            skin,
             panel,
             bitmaps,
             title,
             subtitle,
-            features,
             mic_status,
-            mic_label,
             mic_choice,
             mic_test,
             mic_meter,
             mic_privacy,
-            mic_hint,
-            local,
-            groq,
-            openai,
+            engine,
+            engine_note,
             model_status,
             model_button,
-            model_progress,
+            model_meter,
             key_label,
             key: key_input,
-            lang_label,
             language,
             try_box,
             last,
             launch,
-            tips,
             back,
             next,
             timer,
@@ -227,6 +332,9 @@ impl Onboarding {
         let handler = nwg::full_bind_event_handler(&ui.window.handle, move |evt, data, handle| {
             let Some(ui) = weak.upgrade() else { return };
             use nwg::Event as E;
+            if evt == E::OnButtonClick {
+                ui.skin.click(&handle);
+            }
             match evt {
                 E::OnWindowClose if handle == ui.window.handle => {
                     if let nwg::EventData::OnWindowClose(d) = data {
@@ -257,11 +365,7 @@ impl Onboarding {
                         model::start();
                     }
                 }
-                E::OnButtonClick
-                    if handle == ui.local.handle
-                        || handle == ui.groq.handle
-                        || handle == ui.openai.handle =>
-                {
+                E::OnButtonClick if ui.engine.index_of(&handle).is_some() => {
                     ui.commit_step();
                     ui.layout_engine();
                 }
@@ -280,13 +384,7 @@ impl Onboarding {
     }
 
     fn engine(&self) -> Engine {
-        if c::radio_on(&self.groq) {
-            Engine::Groq
-        } else if c::radio_on(&self.openai) {
-            Engine::OpenAI
-        } else {
-            Engine::Local
-        }
+        ENGINES[self.skin.selected(&self.engine).min(ENGINES.len() - 1)]
     }
 
     fn go(&self, step: usize) {
@@ -303,26 +401,6 @@ impl Onboarding {
             _ => format!("Click into the box, hold {key}, say something, release."),
         };
         self.subtitle.set_text(&subtitle);
-
-        for f in &self.features {
-            f.set_visible(step == 0);
-        }
-        for v in [&self.mic_status, &self.mic_label, &self.mic_hint] {
-            v.set_visible(step == 1);
-        }
-        self.mic_choice.set_visible(step == 1);
-        self.mic_test.set_visible(step == 1);
-        self.mic_meter.set_visible(step == 1);
-        self.mic_privacy.set_visible(step == 1);
-        for r in [&self.local, &self.groq, &self.openai] {
-            r.set_visible(step == 2);
-        }
-        self.lang_label.set_visible(step == 2);
-        self.language.set_visible(step == 2);
-        self.try_box.set_visible(step == 3);
-        self.last.set_visible(step == 3);
-        self.launch.set_visible(step == 3);
-        self.tips.set_visible(step == 3);
         self.back.set_visible(step > 0);
         self.next.set_text(if step == 3 {
             "Start dictating"
@@ -353,12 +431,13 @@ impl Onboarding {
                         .or(Some(0)),
                 );
                 *self.mic_names.borrow_mut() = names;
-                self.mic_meter.set_pos(0);
+                self.mic_meter.set(0.0);
             }
             2 => {
-                c::set_radio(&self.local, cfg.engine == Engine::Local);
-                c::set_radio(&self.groq, cfg.engine == Engine::Groq);
-                c::set_radio(&self.openai, cfg.engine == Engine::OpenAI);
+                self.skin.select(
+                    &self.engine,
+                    ENGINES.iter().position(|e| *e == cfg.engine).unwrap_or(0),
+                );
                 self.language.set_selection(Some(
                     languages::ALL
                         .iter()
@@ -368,7 +447,8 @@ impl Onboarding {
                 ));
             }
             3 => {
-                c::set_checked(&self.launch, autostart::is_enabled());
+                self.skin
+                    .set_on(&self.launch.handle, autostart::is_enabled());
                 self.try_box.set_focus();
             }
             _ => {}
@@ -377,15 +457,17 @@ impl Onboarding {
         self.tick();
     }
 
-    /// Engine step: model download for Local, key field for cloud engines.
+    /// Shows the current step; on the engine step, the model download for
+    /// Local or the key field for a cloud engine.
     fn layout_engine(&self) {
-        let on_step = self.step.get() == 2;
+        let step = self.step.get();
         let local = self.engine() == Engine::Local;
-        self.model_status.set_visible(on_step && local);
-        self.model_button.set_visible(on_step && local);
-        self.model_progress.set_visible(on_step && local);
-        self.key_label.set_visible(on_step && !local);
-        self.key.set_visible(on_step && !local);
+        let mut mask = 1u64 << (step + 1);
+        if step == 2 {
+            mask |= 1u64 << if local { LOCAL } else { CLOUD };
+            self.engine_note.set_text(engine_note(self.engine()));
+        }
+        self.skin.set_visible(mask);
         if !local {
             let account = if self.engine() == Engine::Groq {
                 keystore::GROQ
@@ -395,9 +477,9 @@ impl Onboarding {
             self.key
                 .set_text(&keystore::get_key(account).unwrap_or_default());
             self.key_label.set_text(if self.engine() == Engine::Groq {
-                "Groq key"
+                "Groq API key"
             } else {
-                "OpenAI key"
+                "OpenAI API key"
             });
         }
     }
@@ -444,7 +526,7 @@ impl Onboarding {
                 });
             }
             3 => {
-                let on = c::is_checked(&self.launch);
+                let on = self.skin.is_on(&self.launch.handle);
                 if let Err(e) = autostart::set(on) {
                     log::error!("autostart change failed: {e}");
                 }
@@ -487,7 +569,7 @@ impl Onboarding {
         if let Some((mut m, _)) = self.tester.borrow_mut().take() {
             m.cancel();
         }
-        self.mic_meter.set_pos(0);
+        self.mic_meter.set(0.0);
     }
 
     fn tick(&self) {
@@ -502,7 +584,7 @@ impl Onboarding {
                     let tester = self.tester.borrow();
                     match tester.as_ref() {
                         Some((m, started)) => {
-                            self.mic_meter.set_pos((m.level() * 100.0) as u32);
+                            self.mic_meter.set(m.level());
                             started.elapsed() > Duration::from_secs(5)
                         }
                         None => false,
@@ -538,7 +620,8 @@ impl Onboarding {
                     let s = model::status();
                     let (text, button, pos) = if !crate::win::engine::local::cpu_supported() {
                         (
-                            "This processor cannot run Local. Pick Groq above.".to_string(),
+                            "This processor cannot run the local engine. Pick Groq above."
+                                .to_string(),
                             "Unavailable",
                             0,
                         )
@@ -560,16 +643,14 @@ impl Onboarding {
                             0,
                         )
                     };
-                    if self.model_status.text() != text {
-                        self.model_status.set_text(&text);
-                    }
+                    self.model_status.set_text(&text);
                     if self.model_button.text() != button {
                         self.model_button.set_text(button);
                     }
                     self.model_button.set_enabled(
                         !model::present() && crate::win::engine::local::cpu_supported(),
                     );
-                    self.model_progress.set_pos(pos);
+                    self.model_meter.set(pos as f32 / 100.0);
                 }
             }
             3 => {
@@ -580,9 +661,7 @@ impl Onboarding {
                     ),
                     None => String::new(),
                 };
-                if self.last.text() != text {
-                    self.last.set_text(&text);
-                }
+                self.last.set_text(&text);
             }
             _ => {}
         }

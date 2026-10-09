@@ -2,6 +2,7 @@
 //! Stored only on this PC.
 
 use super::controls::{self as c, Theme};
+use super::skin::{self, ds, Kind, Skin, Text};
 use crate::core::config::OutputMode;
 use crate::win::coordinator::{self, Event};
 use crate::win::{clipboard, state};
@@ -13,6 +14,7 @@ use std::rc::Rc;
 
 pub struct HistoryWindow {
     window: nwg::Window,
+    skin: Rc<Skin>,
     search: nwg::TextInput,
     list: nwg::ListBox<String>,
     detail: nwg::TextBox,
@@ -20,7 +22,7 @@ pub struct HistoryWindow {
     copy_original: nwg::Button,
     smart: nwg::Button,
     clear: nwg::Button,
-    note: nwg::Label,
+    note: Text,
     timer: nwg::AnimationTimer,
     ids: RefCell<Vec<u64>>,
     seen_generation: Cell<u64>,
@@ -47,33 +49,51 @@ fn one_line(text: &str, max: usize) -> String {
 
 impl HistoryWindow {
     pub fn build(theme: Rc<Theme>) -> Result<Rc<HistoryWindow>, NwgError> {
-        let t = &*theme;
-        let w = c::window(t, "Hlas History", (680, 540), false)?;
-        let search = c::input(&w, "", (20, 18), (640, 28), &t.body, false)?;
-        let mut list = nwg::ListBox::default();
-        nwg::ListBox::builder()
-            .position((20, 56))
-            .size((640, 220))
-            .font(Some(&t.body))
-            .collection(Vec::new())
-            .parent(&w)
-            .build(&mut list)?;
-        let detail = c::text_box(&w, (20, 286), (640, 170), &t.body, true)?;
-        let copy = c::button(&w, "Copy text", (20, 468), (130, 32), &t.bold)?;
-        let copy_original = c::button(&w, "Copy original", (158, 468), (130, 32), &t.body)?;
-        let smart = c::button(&w, "Make smart text", (296, 468), (150, 32), &t.body)?;
-        let clear = c::button(&w, "Clear all", (530, 468), (130, 32), &t.body)?;
-        let note = c::label(
-            &w,
+        let t = theme.clone();
+        let w = c::window(&t, "Hlas History", (680, 570), false)?;
+        let skin = Skin::new(theme, &w, ds::BG);
+        let s = &*skin;
+        s.label(
+            0,
+            "History",
+            (20, 16, 400, 30),
+            &t.heading,
+            ds::FG,
+            skin::LINE,
+        );
+        s.label(
+            0,
             "Stored only on this PC. Search covers the text and the original transcript.",
-            (20, 508),
-            (640, 20),
+            (20, 46, 640, 18),
             &t.small,
+            ds::FG3,
+            skin::LINE,
+        );
+        let search = s.input(0, (20, 76, 640, 36), false)?;
+        let list = s.list(0, (20, 124, 640, 230))?;
+        let detail = s.text_box(0, (20, 366, 640, 120), true)?;
+        let copy = s.button(0, "Copy text", (20, 498, 130, 36), Kind::Primary, ds::BG)?;
+        let copy_original = s.button(
+            0,
+            "Copy original",
+            (160, 498, 140, 36),
+            Kind::Secondary,
+            ds::BG,
         )?;
+        let smart = s.button(
+            0,
+            "Make smart text",
+            (310, 498, 160, 36),
+            Kind::Secondary,
+            ds::BG,
+        )?;
+        let clear = s.button(0, "Clear all", (530, 498, 130, 36), Kind::Danger, ds::BG)?;
+        let note = s.label(0, "", (20, 542, 640, 18), &t.small, ds::FG3, skin::LINE);
         let timer = c::timer(&w, 1000)?;
 
         let ui = Rc::new(HistoryWindow {
             window: w,
+            skin,
             search,
             list,
             detail,
@@ -92,6 +112,9 @@ impl HistoryWindow {
         let handler = nwg::full_bind_event_handler(&ui.window.handle, move |evt, data, handle| {
             let Some(ui) = weak.upgrade() else { return };
             use nwg::Event as E;
+            if evt == E::OnButtonClick {
+                ui.skin.click(&handle);
+            }
             match evt {
                 E::OnWindowClose if handle == ui.window.handle => {
                     if let nwg::EventData::OnWindowClose(d) = data {
@@ -169,7 +192,7 @@ impl HistoryWindow {
                     };
                     (
                         e.id,
-                        format!("{}   {}   {}", when(e.date), mode, one_line(&e.text, 80)),
+                        format!("{}  ·  {}\t{}", when(e.date), mode, one_line(&e.text, 140)),
                     )
                 })
                 .collect()

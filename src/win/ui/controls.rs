@@ -1,5 +1,5 @@
-//! Shared fonts and small builders so each window reads as layout, not
-//! boilerplate. Positions and sizes are logical pixels; nwg scales them.
+//! Fonts and the few helpers every window shares. The look itself lives in
+//! `skin`. Positions and sizes are logical pixels; nwg scales them.
 
 use native_windows_gui as nwg;
 use nwg::NwgError;
@@ -7,18 +7,22 @@ use nwg::NwgError;
 pub struct Theme {
     pub body: nwg::Font,
     pub small: nwg::Font,
+    pub medium: nwg::Font,
     pub bold: nwg::Font,
+    pub heading: nwg::Font,
     pub title: nwg::Font,
     pub section: nwg::Font,
-    pub icon: Option<nwg::Icon>,
-    /// The window background, so check boxes and radios blend in.
-    pub bg: [u8; 3],
+    pub wordmark: nwg::Font,
+    /// Segoe Fluent Icons (Windows 11) or Segoe MDL2 Assets (Windows 10).
+    pub icon: nwg::Font,
+    pub icon_small: nwg::Font,
+    pub app_icon: Option<nwg::Icon>,
 }
 
-fn font(size: u32, weight: u32) -> Result<nwg::Font, NwgError> {
+fn font(family: &str, size: u32, weight: u32) -> Result<nwg::Font, NwgError> {
     let mut f = nwg::Font::default();
     nwg::Font::builder()
-        .family("Segoe UI")
+        .family(family)
         .size_absolute(size)
         .weight(weight)
         .build(&mut f)?;
@@ -27,29 +31,39 @@ fn font(size: u32, weight: u32) -> Result<nwg::Font, NwgError> {
 
 impl Theme {
     pub fn new() -> Result<Theme, NwgError> {
-        let body = font(15, 400)?;
-        let _ = nwg::Font::set_global_family("Segoe UI");
-        let icon = nwg::EmbedResource::load(None)
+        super::skin::enable_dark_mode();
+        // Satoshi, as on macOS; Segoe UI if the fonts cannot be registered.
+        let (regular, medium) = if super::skin::load_fonts() {
+            ("Satoshi", "Satoshi Medium")
+        } else {
+            log::warn!("bundled fonts not registered, using Segoe UI");
+            ("Segoe UI", "Segoe UI Semibold")
+        };
+        let _ = nwg::Font::set_global_family(regular);
+        let windows = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
+        let icons = if std::path::Path::new(&windows)
+            .join(r"Fonts\SegoeIcons.ttf")
+            .exists()
+        {
+            "Segoe Fluent Icons"
+        } else {
+            "Segoe MDL2 Assets"
+        };
+        let app_icon = nwg::EmbedResource::load(None)
             .ok()
             .and_then(|e| e.icon(1, None));
-        let bg = unsafe {
-            let c = windows::Win32::Graphics::Gdi::GetSysColor(
-                windows::Win32::Graphics::Gdi::COLOR_WINDOW,
-            );
-            [
-                (c & 0xFF) as u8,
-                ((c >> 8) & 0xFF) as u8,
-                ((c >> 16) & 0xFF) as u8,
-            ]
-        };
         Ok(Theme {
-            body,
-            small: font(13, 400)?,
-            bold: font(15, 600)?,
-            title: font(26, 700)?,
-            section: font(12, 700)?,
-            icon,
-            bg,
+            body: font(regular, 15, 400)?,
+            small: font(regular, 13, 400)?,
+            medium: font(medium, 15, 500)?,
+            bold: font(regular, 15, 700)?,
+            heading: font(regular, 20, 700)?,
+            title: font(regular, 28, 700)?,
+            section: font(medium, 11, 500)?,
+            wordmark: font(regular, 17, 700)?,
+            icon: font(icons, 18, 400)?,
+            icon_small: font(icons, 15, 400)?,
+            app_icon,
         })
     }
 }
@@ -70,174 +84,9 @@ pub fn window(
         .size(size)
         .center(true)
         .flags(flags)
-        .icon(theme.icon.as_ref())
+        .icon(theme.app_icon.as_ref())
         .build(&mut w)?;
     Ok(w)
-}
-
-pub fn label(
-    parent: &nwg::Window,
-    text: &str,
-    pos: (i32, i32),
-    size: (i32, i32),
-    font: &nwg::Font,
-) -> Result<nwg::Label, NwgError> {
-    let mut l = nwg::Label::default();
-    nwg::Label::builder()
-        .text(text)
-        .position(pos)
-        .size(size)
-        .font(Some(font))
-        .parent(parent)
-        .build(&mut l)?;
-    Ok(l)
-}
-
-pub fn button(
-    parent: &nwg::Window,
-    text: &str,
-    pos: (i32, i32),
-    size: (i32, i32),
-    font: &nwg::Font,
-) -> Result<nwg::Button, NwgError> {
-    let mut b = nwg::Button::default();
-    nwg::Button::builder()
-        .text(text)
-        .position(pos)
-        .size(size)
-        .font(Some(font))
-        .parent(parent)
-        .build(&mut b)?;
-    Ok(b)
-}
-
-pub fn input(
-    parent: &nwg::Window,
-    text: &str,
-    pos: (i32, i32),
-    size: (i32, i32),
-    font: &nwg::Font,
-    secret: bool,
-) -> Result<nwg::TextInput, NwgError> {
-    let mut t = nwg::TextInput::default();
-    nwg::TextInput::builder()
-        .text(text)
-        .position(pos)
-        .size(size)
-        .font(Some(font))
-        .password(if secret { Some('\u{2022}') } else { None })
-        .parent(parent)
-        .build(&mut t)?;
-    Ok(t)
-}
-
-pub fn text_box(
-    parent: &nwg::Window,
-    pos: (i32, i32),
-    size: (i32, i32),
-    font: &nwg::Font,
-    readonly: bool,
-) -> Result<nwg::TextBox, NwgError> {
-    let mut t = nwg::TextBox::default();
-    nwg::TextBox::builder()
-        .position(pos)
-        .size(size)
-        .font(Some(font))
-        .readonly(readonly)
-        .flags(
-            nwg::TextBoxFlags::VISIBLE
-                | nwg::TextBoxFlags::VSCROLL
-                | nwg::TextBoxFlags::AUTOVSCROLL
-                | nwg::TextBoxFlags::TAB_STOP,
-        )
-        .parent(parent)
-        .build(&mut t)?;
-    Ok(t)
-}
-
-pub fn check(
-    parent: &nwg::Window,
-    theme: &Theme,
-    text: &str,
-    pos: (i32, i32),
-    size: (i32, i32),
-    checked: bool,
-) -> Result<nwg::CheckBox, NwgError> {
-    let mut c = nwg::CheckBox::default();
-    nwg::CheckBox::builder()
-        .text(text)
-        .position(pos)
-        .size(size)
-        .font(Some(&theme.body))
-        .background_color(Some(theme.bg))
-        .check_state(if checked {
-            nwg::CheckBoxState::Checked
-        } else {
-            nwg::CheckBoxState::Unchecked
-        })
-        .parent(parent)
-        .build(&mut c)?;
-    Ok(c)
-}
-
-pub fn radio(
-    parent: &nwg::Window,
-    theme: &Theme,
-    text: &str,
-    pos: (i32, i32),
-    size: (i32, i32),
-    first: bool,
-) -> Result<nwg::RadioButton, NwgError> {
-    let mut r = nwg::RadioButton::default();
-    let mut flags = nwg::RadioButtonFlags::VISIBLE | nwg::RadioButtonFlags::TAB_STOP;
-    if first {
-        flags |= nwg::RadioButtonFlags::GROUP;
-    }
-    nwg::RadioButton::builder()
-        .text(text)
-        .position(pos)
-        .size(size)
-        .flags(flags)
-        .font(Some(&theme.body))
-        .background_color(Some(theme.bg))
-        .parent(parent)
-        .build(&mut r)?;
-    Ok(r)
-}
-
-pub fn combo(
-    parent: &nwg::Window,
-    items: Vec<String>,
-    selected: Option<usize>,
-    pos: (i32, i32),
-    width: i32,
-    font: &nwg::Font,
-) -> Result<nwg::ComboBox<String>, NwgError> {
-    let mut c = nwg::ComboBox::default();
-    nwg::ComboBox::builder()
-        .collection(items)
-        .selected_index(selected)
-        .position(pos)
-        .size((width, 26))
-        .font(Some(font))
-        .parent(parent)
-        .build(&mut c)?;
-    Ok(c)
-}
-
-pub fn progress(
-    parent: &nwg::Window,
-    pos: (i32, i32),
-    size: (i32, i32),
-) -> Result<nwg::ProgressBar, NwgError> {
-    let mut p = nwg::ProgressBar::default();
-    nwg::ProgressBar::builder()
-        .position(pos)
-        .size(size)
-        .range(0..100)
-        .parent(parent)
-        .build(&mut p)?;
-    Ok(p)
 }
 
 pub fn timer(parent: &nwg::Window, ms: u32) -> Result<nwg::AnimationTimer, NwgError> {
@@ -247,30 +96,6 @@ pub fn timer(parent: &nwg::Window, ms: u32) -> Result<nwg::AnimationTimer, NwgEr
         .interval(std::time::Duration::from_millis(ms as u64))
         .build(&mut t)?;
     Ok(t)
-}
-
-pub fn is_checked(c: &nwg::CheckBox) -> bool {
-    c.check_state() == nwg::CheckBoxState::Checked
-}
-
-pub fn set_checked(c: &nwg::CheckBox, on: bool) {
-    c.set_check_state(if on {
-        nwg::CheckBoxState::Checked
-    } else {
-        nwg::CheckBoxState::Unchecked
-    });
-}
-
-pub fn radio_on(r: &nwg::RadioButton) -> bool {
-    r.check_state() == nwg::RadioButtonState::Checked
-}
-
-pub fn set_radio(r: &nwg::RadioButton, on: bool) {
-    r.set_check_state(if on {
-        nwg::RadioButtonState::Checked
-    } else {
-        nwg::RadioButtonState::Unchecked
-    });
 }
 
 /// Edit controls want CRLF; the rest of Hlas uses LF.
