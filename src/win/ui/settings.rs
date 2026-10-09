@@ -322,10 +322,8 @@ impl SettingsWindow {
                 E::OnButtonClick if handle == ui.updates.handle => {
                     crate::win::update::check_in_background(true)
                 }
-                E::OnTimerTick if handle == ui.timer.handle => {
-                    if ui.window.visible() {
-                        ui.refresh_model();
-                    }
+                E::OnTimerTick if handle == ui.timer.handle && ui.window.visible() => {
+                    ui.refresh_model()
                 }
                 _ => {}
             }

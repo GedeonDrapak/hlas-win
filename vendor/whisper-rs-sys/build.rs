@@ -134,7 +134,10 @@ fn main() {
         .map_err(|v| v.to_string())
         .unwrap();
 
-        let bindings = bindgen::Builder::default()
+        // Local fix: upstream 0.15.0 declares this immutable, so the metal and
+        // vulkan features fail to compile the build script.
+        #[allow(unused_mut)]
+        let mut bindings = bindgen::Builder::default()
             .rust_edition(bindgen::RustEdition::Edition2021)
             .rust_target(package_msrv)
             .header("wrapper.h");

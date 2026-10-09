@@ -1,52 +1,87 @@
 # Hlas for Windows
 
-Ultra-minimal dictation for Windows. Hold a key, speak Czech or English, release - text lands at your cursor. No subscription, no account, no telemetry.
+**Dictation. Not typing.**
 
-The Windows counterpart to [Hlas for macOS](https://github.com/GedeonDrapak/hlas). Native Rust, no Electron, no runtime - a single small `.exe` that idles at a few MB of RAM.
+Hold **Right Ctrl**, speak Czech or English, release: the text lands at your
+cursor, in any app. No subscription, no account, no telemetry, no cloud unless
+you ask for it.
 
-## Push-to-talk key
-
-Windows has no `Fn` scancode (the keyboard firmware eats it), so the macOS "hold Fn" gesture maps to **Right Ctrl** by default. Hold it, speak, release.
-
-## Engines
-
-- **Local (default):** whisper.cpp `large-v3-turbo-q5_0`, downloaded automatically on the first local dictation (~547 MB) to `%APPDATA%\Hlas\models\`. Runs on CPU; audio never leaves the PC.
-- **Groq API:** `whisper-large-v3-turbo`. BYOK.
-- **OpenAI API:** `gpt-transcribe` - best accuracy and vocabulary support. BYOK.
-
-API keys are stored in the Windows Credential Manager, never in a config file.
+The Windows twin of [Hlas for macOS](https://github.com/GedeonDrapak/hlas).
+Native Rust, no Electron, no runtime: one small `.exe` that idles at a few MB
+of RAM.
 
 ## Install
 
-Grab `Hlas-setup.exe` from the [latest release](https://github.com/GedeonDrapak/hlas-win/releases/latest), or build it yourself. The installer is per-user, needs no administrator rights, and registers a normal Windows uninstaller.
+Download `Hlas-setup.exe` from the
+[latest release](https://github.com/GedeonDrapak/hlas-win/releases). It
+installs per user, needs no administrator rights and registers a normal
+uninstaller.
+
+Until the installer is code-signed, Windows shows "Windows protected your PC".
+Click **More info > Run anyway**. The source of every line is in this repo.
+
+On first launch a short welcome tour checks the microphone, lets you pick the
+engine and download the local model, and gives you a box to try it in.
+
+## How it works
+
+- **Hold Right Ctrl**, speak, release: the text is pasted where your cursor is.
+- **Quick-tap Right Ctrl** to keep listening hands-free; tap again to stop.
+- **Esc** cancels at any time. **Shift** held at the start gives a plain
+  transcript even when Smart text is on.
+- Right Ctrl shortcuts (Right Ctrl+C and friends) keep working: pressing
+  another key with it cancels the dictation silently.
+- Switched to another app while it was transcribing? Hlas does not paste into
+  the wrong place; it shows the text in a small window with a Copy button.
+- Windows has no Fn key for apps to listen to, so the macOS "hold Fn" gesture
+  maps to Right Ctrl. Settings offers Right Alt, Right Shift, Scroll Lock,
+  Pause and F13 to F16 instead.
+
+## Engines
+
+| Engine | What runs | Cost |
+|---|---|---|
+| **Local** (default) | whisper.cpp `large-v3-turbo-q5_0` on this PC. Audio never leaves it. One-time 547 MB download, verified by SHA-256. | free |
+| **Groq** | `whisper-large-v3-turbo`, your own API key | about $1 to 3 a month |
+| **OpenAI** | `gpt-transcribe`, your own API key | about $8 a month at heavy use |
+
+**Smart text** (optional) reformats the transcript by intent: messages stay
+prose, real lists become bullets, procedures become numbered steps. It uses
+Groq or OpenAI with the same prompt and safeguards as the macOS app.
+
+## Privacy
+
+- Local engine: audio is processed on this PC and discarded.
+- Cloud engines and Smart text: audio or text goes straight to the provider
+  you chose. API keys are stored in Windows Credential Manager.
+- History (last 50 results) stays in `%LOCALAPPDATA%\Hlas` and can be turned
+  off or cleared in Settings. Dictations are kept out of Windows clipboard
+  history and cloud clipboard.
+- The log never contains transcripts or keys. Hlas never connects anywhere on
+  its own; "Check for updates" asks GitHub only when you click it.
 
 ## Build
 
-Requires the Rust toolchain and, for the local engine, an LLVM install (bindgen) plus CMake (whisper.cpp). On Windows:
+On Windows with the Rust toolchain:
 
 ```powershell
-winget install LLVM.LLVM
+winget install LLVM.LLVM Kitware.CMake
 cargo build --release
 ```
 
-The executable lands at `target\release\hlas.exe`. CI builds it and the NSIS installer on every push. Pushing a version tag such as `v0.1.0` publishes both files to a GitHub Release.
+`target\release\hlas.exe` is the whole app. `installer\hlas.nsi` packages it
+with NSIS. CI builds both on every push and attaches them to tagged releases.
 
-## Architecture
+The platform-independent core (audio preparation, text rules, history,
+config) is tested on any OS:
 
-One module, one concern - mirrors the macOS layout:
+```bash
+cargo test
+```
 
-| File | Concern |
-|---|---|
-| `hotkey.rs` | `WH_KEYBOARD_LL` low-level hook, hold-to-talk edges |
-| `audio.rs` | cpal (WASAPI) capture → 16 kHz mono f32 |
-| `transcribe/` | engine dispatch: `local` (whisper-rs), `cloud` (Groq/OpenAI), `model` downloader |
-| `inject.rs` | clipboard swap + synthesized Ctrl+V |
-| `overlay.rs` | layered, click-through status pill (bottom-center) |
-| `settings.rs` | native Win32 settings window (native-windows-gui) |
-| `tray.rs` | tray icon, menu, main message loop |
-| `autostart.rs` | launch-at-login via HKCU Run key |
-| `keystore.rs` | API keys in Credential Manager |
+More for contributors and coding agents: [AGENTS.md](AGENTS.md). Current state
+and the hardware test plan: [docs/HANDOFF.md](docs/HANDOFF.md).
 
-## Status
+## License
 
-First cut. Builds green in CI; on-device behavior (hook timing, WASAPI device quirks, overlay compositing) needs testing on real Windows hardware.
+MIT. whisper.cpp and the Whisper model are MIT licensed by their authors.

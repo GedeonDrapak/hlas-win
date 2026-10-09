@@ -125,10 +125,12 @@ impl HistoryWindow {
                         ui.clear.set_text("Click to confirm");
                     }
                 }
-                E::OnTimerTick if handle == ui.timer.handle => {
-                    if ui.window.visible() && state::generation() != ui.seen_generation.get() {
-                        ui.reload();
-                    }
+                E::OnTimerTick
+                    if handle == ui.timer.handle
+                        && ui.window.visible()
+                        && state::generation() != ui.seen_generation.get() =>
+                {
+                    ui.reload()
                 }
                 _ => {}
             }
