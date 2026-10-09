@@ -140,7 +140,26 @@ legal identity). Once the secrets exist, CI signs automatically.
 
 ## 8. Findings from hardware testing
 
-(empty - fill in)
+### 2026-10-09, Tomáš's laptop (i7-13620H, Windows 11 Home, Smart App Control on)
+
+- **Local engine speed, root cause found (fix in `vendor/whisper-rs-sys/build.rs`).**
+  With the default Visual Studio generator, cmake-rs 0.1.58 overwrites
+  `CMAKE_<LANG>_FLAGS_RELEASE` with cc's flags and strips every `/O` switch
+  (`cmake` crate `src/lib.rs`, the `generator.is_none() && msvc` branch), so
+  MSVC compiled ggml **unoptimized**. The clang job escapes it because
+  `CMAKE_GENERATOR=Ninja` skips that branch. CI run 37914441177: the clang
+  benchmark ran all three configs in 3.6 min and "Transcribe Czech audio
+  locally" took 53 s for the whole step; the MSVC step hit its 15 min limit.
+  The fix restores CMake's own Release flags (`/MD /O2 /Ob2 /DNDEBUG`, plus
+  `/EHsc` for C++) for MSVC targets. Not yet confirmed by a CI run.
+- **Smart App Control blocks Hlas entirely, not just a SmartScreen warning.**
+  On a PC with Smart App Control on, every unsigned binary without cloud
+  reputation is blocked with no "Run anyway" (CodeIntegrity events 3077/3118).
+  Here it even blocked `cargo build` (build scripts and proc-macro DLLs), so
+  Hlas cannot be built or run on this laptop. SAC is on by default on clean
+  Windows 11 installs, so unsigned releases will simply not start for a share
+  of users: signing (section 6) is a release blocker, and the test in
+  section 3 needs a PC with SAC off.
 
 ## 9. CI outcome at handoff (2026-10-09, Windows Server runner, 4 vCPU)
 
