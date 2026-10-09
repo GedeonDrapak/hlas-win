@@ -201,11 +201,29 @@ fn main() {
     // Local fix: with the default Visual Studio generator, cmake-rs overwrites
     // CMAKE_<LANG>_FLAGS_RELEASE with cc's flags minus every /O switch, so
     // MSVC compiled ggml without optimization (about 100x slower: 870 s for
-    // 6 s of audio on CI). Restore CMake's own Release flags. /MD matches
-    // Rust's default dynamic CRT; /EHsc is CMake's default C++ flag.
+    // 6 s of audio on CI). Restore CMake's own Release flags, matching
+    // the CRT Rust links (/MT with crt-static); /EHsc is CMake's default C++ flag.
     if env::var("TARGET").map_or(false, |t| t.contains("msvc")) {
-        config.define("CMAKE_C_FLAGS_RELEASE", "/MD /O2 /Ob2 /DNDEBUG");
-        config.define("CMAKE_CXX_FLAGS_RELEASE", "/MD /O2 /Ob2 /DNDEBUG /EHsc");
+        let crt =
+            if env::var("CARGO_CFG_TARGET_FEATURE").map_or(false, |f| f.contains("crt-static")) {
+                "/MT"
+            } else {
+                "/MD"
+            };
+        // Same choice for CMake >= 3.15 projects (policy CMP0091).
+        config.define(
+            "CMAKE_MSVC_RUNTIME_LIBRARY",
+            if crt == "/MT" {
+                "MultiThreaded"
+            } else {
+                "MultiThreadedDLL"
+            },
+        );
+        config.define("CMAKE_C_FLAGS_RELEASE", format!("{crt} /O2 /Ob2 /DNDEBUG"));
+        config.define(
+            "CMAKE_CXX_FLAGS_RELEASE",
+            format!("{crt} /O2 /Ob2 /DNDEBUG /EHsc"),
+        );
     }
 
     if cfg!(feature = "coreml") {
