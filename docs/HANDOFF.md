@@ -191,8 +191,32 @@ legal identity). Once the secrets exist, CI signs automatically.
      falls back to the CPU when no GPU is usable - to verify), and on
      CPU-only PCs make Groq the default in the welcome tour with Local as
      the private, slower option.
-- `HLAS_AUDIO_CTX=auto|N` added to `engine/local.rs` as a benchmark override
-  next to `HLAS_THREADS` and `HLAS_GREEDY`.
+- `HLAS_AUDIO_CTX=auto|N`, `HLAS_BEAM=N` and `HLAS_NO_FALLBACK=1` added to
+  `engine/local.rs` as benchmark overrides next to `HLAS_THREADS` and
+  `HLAS_GREEDY`.
+- **Where the CPU time goes.** Without temperature fallback the CPU numbers
+  do not move (6.1 s: 14.3 s beam / 14.5 s greedy; 25 s: 25.3 s / 29.6 s), and
+  greedy is no faster than beam. Only shrinking the encoder window helped
+  (6.1 s clip: 14 s -> 4.8 s). So the floor is the encoder: turbo keeps
+  large-v3's full 32-layer encoder and only trims the decoder, and the
+  encoder always runs a 30 s window - about 12-14 s on this i7. No decoder
+  setting fixes that; a GPU, a smaller model or a shorter window would.
+- **Two start-up dependencies found with `dumpbin /dependents`:**
+  1. `hlas.exe` imported `MSVCP140.dll` / `VCRUNTIME140.dll`, which the
+     installer does not ship: no start on a PC without the Visual C++
+     Redistributable. Fixed with a static CRT (`.cargo/config.toml`
+     crt-static, `/MT` for whisper.cpp).
+  2. `hlas-vulkan.exe` imported `vulkan-1.dll`: no start without a Vulkan
+     driver, although ggml loads Vulkan dynamically and falls back to the
+     CPU. Fixed with `/DELAYLOAD:vulkan-1.dll` (`build.rs`).
+  CI run 37928597093 is green with both fixes (tests, local transcription,
+  hotkey to Notepad; speed unchanged, 6.1 s in 45 s on the runner), and
+  `dumpbin` confirms no CRT import and vulkan-1.dll only as a delay-load
+  import. Not yet run on a PC without the redistributable or without Vulkan.
+- **Smart App Control is inconsistent.** It let the CI builds from runs
+  37922714743 and 37924930740 run on this laptop, then blocked both exes
+  from run 37928597093 (CodeIntegrity 3077). An unsigned Hlas may start for
+  one user and not for the next.
 - **Smart App Control blocks Hlas entirely, not just a SmartScreen warning.**
   On a PC with Smart App Control on, every unsigned binary without cloud
   reputation is blocked with no "Run anyway" (CodeIntegrity events 3077/3118).
