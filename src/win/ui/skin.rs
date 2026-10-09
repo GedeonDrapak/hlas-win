@@ -1112,9 +1112,9 @@ impl Skin {
         // ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN, plus ES_READONLY.
         let style = 0x0004 | 0x0040 | 0x1000 | if readonly { 0x0800 } else { 0 };
         let hwnd = self.edit(group, (x + 12, y + 9, w - 24, h - 18), style)?;
-        let mut t = nwg::TextBox::default();
-        t.handle = nwg::ControlHandle::Hwnd(hwnd as _);
-        Ok(t)
+        Ok(nwg::TextBox {
+            handle: nwg::ControlHandle::Hwnd(hwnd as _),
+        })
     }
 
     /// A dropdown: a field-like button that opens a dark list.
